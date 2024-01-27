@@ -4,21 +4,37 @@
 //! - Only integer numbers, not all numeric formats
 //! - Probably other things because I don't know Lisp?
 //!
-//! I read a little of Practical Common Lisp (https://gigamonkeys.com/book/) to understand the basic syntax,
-//! but stopped once I understood that "forms" matter (only) in the evaluation phase.
+
+
+// I read a little of Practical Common Lisp (https://gigamonkeys.com/book/) to understand the basic syntax,
+// but stopped once I understood that "forms" matter (only) in the evaluation phase.
+//
+// My first draft of this parser was based on iterators: an iterator over `char`s becomes an iterator over
+// tokens, then an iterator over tokens becomes an iterator over expressions.
+//
+// But that's a more complicated interaction than we really need. Even with REPL-style interaction, we want to allow
+// waiting for at least a full line at a time before we start parsing.
+// 
+// Where I landed was on was "parse a &str into SExpressions"...but have the error type distinguish between
+// "this has an error", e.g. an extra RParen, and "this is a conceivable prefix, but is missing a closing paren / string terminator / etc"
+// I think this is useful for a REPL; we try to parse on each newline,
+// and we either raise an error or ask for more input depending on the result.
+// (If the caller reads from a file, they're both errors.)
+//
 
 use std::{convert::Infallible, fmt::Display, str::FromStr};
 
-mod tokens;
+mod reader;
 
 pub mod prelude {
-    pub use crate::{SExpression,Atom,LispNumber,LispString,LispSymbol};
+    pub use crate::{Atom, LispNumber, LispString, LispSymbol, SExpression};
 }
 
+pub use reader::{ReadErr,read};
 
 /// A Lisp S-expression.
 /// Either a list or an atom.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SExpression {
     List(Vec<SExpression>),
     Atom(Atom),
@@ -48,7 +64,29 @@ pub struct LispSymbol(String);
 
 /// A Lisp number.
 /// Just "signed integer" for now; consider support for other numeric types in the future.
-pub type LispNumber = i64;
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct LispNumber(i64);
+
+impl From<LispString> for Atom {
+    fn from(value: LispString) -> Self {
+        Atom::String(value)
+    }
+}
+impl From<LispSymbol> for Atom {
+    fn from(value: LispSymbol) -> Self {
+        Atom::Symbol(value)
+    }
+}
+impl From<LispNumber> for Atom {
+    fn from(value: LispNumber) -> Self {
+        Atom::Number(value)
+    }
+}
+impl From<Atom> for SExpression {
+    fn from(value: Atom) -> Self {
+        SExpression::Atom(value)
+    }
+}
 
 impl Display for LispString {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -75,6 +113,12 @@ impl FromStr for LispSymbol {
 }
 
 impl Display for LispSymbol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl Display for LispNumber {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
     }
