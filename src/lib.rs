@@ -88,11 +88,26 @@ impl From<Atom> for SExpression {
     }
 }
 
+impl LispString {
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+
+    /// Prints the string with inner quotes and backslashes escaped, but without wrapping quotes.
+    /// (That is: this, plus wrapping double-quotes, is the "Lisp" representation of this string.)
+    pub fn escaped(&self) -> String {
+        self.0.replace('\\', "\\\\").replace("\"", "\\\"")
+    }
+}
+impl LispSymbol {
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
 impl Display for LispString {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Escape quotes and backslashes; everything else is literal.
-        let formatted = self.0.replace('\\', "\\\\").replace("\"", "\\\"");
-        write!(f, "\"{}\"", formatted)
+        write!(f, "\"{}\"", &self.escaped())
     }
 }
 

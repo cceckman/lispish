@@ -1,7 +1,4 @@
-//! Support for reading LISP expressions from input.
-//!
-//!
-//!
+//! Support for reading LISP expressions from strings.
 
 use crate::prelude::*;
 
