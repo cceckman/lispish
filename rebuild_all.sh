@@ -12,7 +12,7 @@ do
     | dot -T svg \
   >"target/$BASENAME.svg"
 
-  <"$file" target/debug/lisp_to_debug \
+  <"$file" target/debug/lispish \
     >"target/$BASENAME.lisp" \
     2>"target/$BASENAME.debug"
 done
