@@ -14,7 +14,7 @@ pub enum Token {
     Quote,
     String(String),
     Symbol(String),
-    Integer(i64),
+    Integer(isize),
     Float(f64),
 }
 
@@ -215,7 +215,7 @@ fn get_next_token(input: &[u8]) -> ReadResult<NextToken<'_>> {
     if let Some(s) = regex::integer().find(input) {
         let s = std::str::from_utf8(s.as_bytes())
             .expect("internal error: regex recognized integer that was not utf-8");
-        let int: i64 = s.parse().map_err(|e| {
+        let int: isize = s.parse().map_err(|e| {
             ReadErr::Error(format!("failed to convert \"{}\" into integer: {}", s, e))
         })?;
         let remainder = &input[s.len()..];
