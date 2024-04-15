@@ -55,6 +55,17 @@ mod tokens {
         pub column: usize,
     }
 
+    impl TokenOffset {
+        pub fn new(line: usize, column: usize, token: Token) -> Self {
+            // In useful output, lines and columns are 1-indexed
+            TokenOffset {
+                token,
+                line: line + 1,
+                column: column + 1,
+            }
+        }
+    }
+
     impl From<TokenOffset> for Token {
         fn from(value: TokenOffset) -> Self {
             value.token
@@ -68,8 +79,8 @@ mod tokens {
         let mut characters = input.chars().enumerate().peekable();
 
         // Position info for debug messages:
-        // Line number (starting from 1)
-        let mut line = 1;
+        // Line number (starting from 0 - fix it up when doing output)
+        let mut line = 0;
         // Absolute offset at which the current line started; for computing column counts.
         let mut line_start = 0;
         loop {
@@ -113,18 +124,14 @@ mod tokens {
             let next = match token {
                 Err(ReadErr::Incomplete(v)) => Err(ReadErr::Incomplete(format!(
                     "incomplete input at line {} column {}: {}",
-                    line, column, v
+                    line + 1, column + 1, v
                 ))),
                 Err(ReadErr::Error(v)) => Err(ReadErr::Incomplete(format!(
                     "input error at line {} column {}: {}",
-                    line, column, v
+                    line + 1, column + 1, v
                 ))),
 
-                Ok(token) => Ok(TokenOffset {
-                    line,
-                    column,
-                    token,
-                }),
+                Ok(token) => Ok(TokenOffset::new(line, column, token)),
             }?;
 
             // One final fixup: our string parser allows for multiline strings, just matching on the terminal '"'.
@@ -440,7 +447,13 @@ mod tests {
 
     #[test]
     fn error_on_unexpected_stringend() {
-        let input = "\"hello";
+        let input = r#"(
+"hello1"
+ "hello
+
+)"#;
+        // Our example ends with the string-start at line 3 (1-indexed),
+        // column 2 (1-indexed)
 
         match tokenize(input) {
             Ok(_) => panic!("expected error for input"),
@@ -448,7 +461,21 @@ mod tests {
                 "got terminal error, expected incomplete error; got: {:?}",
                 e
             ),
-            Err(ReadErr::Incomplete(_)) => (),
+            Err(ReadErr::Incomplete(e)) => {
+                // We got the error that we want...Does it have the useful debug info?
+                let want_line = "line 3";
+                let want_col = "column 2";
+                assert!(
+                    e.contains(want_line),
+                    "missing line info from error string: {:?}",
+                    e
+                );
+                assert!(
+                    e.contains(want_col),
+                    "missing column info from error string: {:?}",
+                    e
+                );
+            }
         }
     }
 
