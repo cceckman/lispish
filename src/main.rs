@@ -18,11 +18,5 @@ fn main() {
         .read_to_end(&mut bytes)
         .expect("error: could not read input");
     let s: String = String::from_utf8(bytes).expect("error: input is not UTF-8");
-
-    let result = lispish::read(&s).expect("error: failed to parse input as Lisp");
-
-    for sexpr in result {
-        println!("{}", sexpr);
-        eprintln!("{:?}", sexpr);
-    }
+    let _ = lispish::reader::read(&s);
 }

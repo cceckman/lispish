@@ -1,7 +1,5 @@
 //! Support for reading LISP expressions from strings.
 
-use crate::prelude::*;
-
 /// Error type if a read does not complete.
 ///
 /// A reader may experience a true tokenizing/parsing error, e.g. "())", that no additional input can fix.
@@ -19,9 +17,23 @@ pub enum ReadErr {
     Incomplete(String),
 }
 
+impl ReadErr {
+    /// Add additional context to an error.
+    pub fn annotate(self, more: impl AsRef<str>) -> Self {
+        match self {
+            ReadErr::Error(e) => ReadErr::Error(format!("{}: {}", more.as_ref(), e)),
+            ReadErr::Incomplete(e) => ReadErr::Incomplete(format!("{}: {}", more.as_ref(), e)),
+        }
+
+    }
+}
+
 /// The main result type for this module:
 /// a T (token, expression, etc), or an error, or incomplete.
 pub type ReadResult<T> = Result<T, ReadErr>;
+
+
+mod token;
 
 /// Attempt to read the provided input as an SExpression.
 ///
@@ -29,233 +41,14 @@ pub type ReadResult<T> = Result<T, ReadErr>;
 /// more input is provided. The associated string gives an indication as to what is expected.
 /// If parsing dynamic input (e.g. stdin), the user may wish to wait for more input;
 /// if parsing state input (e.g. a file), Incomplete may be treated as a read error.
-pub fn read(input: &str) -> ReadResult<Vec<SExpression>> {
-    // I'd like to `impl Try for ReadResult` but
-    let tok = tokens::tokenize(input)?;
-    parse::parse(tok.into_iter())
+pub fn read(input: &str) -> ReadResult<()> {
+    // I'd like to `impl Try for ReadResult` but that's not stable yet.
+    _ = token::tokenize(input)?;
+
+    todo!();
 }
 
-mod tokens {
-    use std::iter::Peekable;
-
-    use super::*;
-
-    #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
-    pub enum Token {
-        LParen,
-        Atom(Atom),
-        RParen,
-    }
-
-    /// Token along with its starting position in the input stream.
-    #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
-    pub struct TokenOffset {
-        pub token: Token,
-        pub line: usize,
-        pub column: usize,
-    }
-
-    impl TokenOffset {
-        pub fn new(line: usize, column: usize, token: Token) -> Self {
-            // In useful output, lines and columns are 1-indexed
-            TokenOffset {
-                token,
-                line: line + 1,
-                column: column + 1,
-            }
-        }
-    }
-
-    impl From<TokenOffset> for Token {
-        fn from(value: TokenOffset) -> Self {
-            value.token
-        }
-    }
-
-    /// Split the input into its constituent tokens.
-    pub fn tokenize(input: &str) -> ReadResult<Vec<TokenOffset>> {
-        let mut result = Vec::new();
-
-        let mut characters = input.chars().enumerate().peekable();
-
-        // Position info for debug messages:
-        // Line number (starting from 0 - fix it up when doing output)
-        let mut line = 0;
-        // Absolute offset at which the current line started; for computing column counts.
-        let mut line_start = 0;
-        loop {
-            // We have to use this rather than `while peek` to avoid a double-borrow;
-            // the `while` construct borrows `characters`.
-            let (offset, c) = match characters.peek() {
-                Some(v) => v.to_owned(),
-                None => break,
-            };
-
-            let token: ReadResult<Token> = match c {
-                '(' => {
-                    characters.next();
-                    Ok(Token::LParen)
-                }
-
-                ')' => {
-                    characters.next();
-                    Ok(Token::RParen)
-                }
-                '"' => get_string(&mut characters).map(|v| Token::Atom(Atom::String(v))),
-                '0'..='9' | '-' => {
-                    get_number(&mut characters).map(|v| Token::Atom(Atom::Number(v)))
-                }
-                '\n' => {
-                    line += 1;
-                    line_start = offset + 1;
-                    characters.next();
-                    continue;
-                }
-                c => {
-                    if c.is_whitespace() {
-                        characters.next();
-                        continue;
-                    } else {
-                        get_symbol(&mut characters).map(|v| Token::Atom(Atom::Symbol(v)))
-                    }
-                }
-            };
-            let column = offset - line_start;
-            let next = match token {
-                Err(ReadErr::Incomplete(v)) => Err(ReadErr::Incomplete(format!(
-                    "incomplete input at line {} column {}: {}",
-                    line + 1, column + 1, v
-                ))),
-                Err(ReadErr::Error(v)) => Err(ReadErr::Incomplete(format!(
-                    "input error at line {} column {}: {}",
-                    line + 1, column + 1, v
-                ))),
-
-                Ok(token) => Ok(TokenOffset::new(line, column, token)),
-            }?;
-
-            // One final fixup: our string parser allows for multiline strings, just matching on the terminal '"'.
-            // We need to make sure any newlines in our string token count towards the output.
-            if let Token::Atom(Atom::String(s)) = &next.token {
-                for (string_offset, c) in s.0.chars().enumerate() {
-                    // This string started with its double-quote at 'offset', so this character's absolute offset is...
-                    let char_abs_offset = offset + 1 + string_offset;
-                    if c == '\n' {
-                        line += 1;
-                        line_start = char_abs_offset;
-                    }
-                }
-            }
-
-            result.push(next);
-        }
-
-        Ok(result)
-    }
-
-    /// Consumes a Lisp string from the input iterator.
-    fn get_string(
-        it: &mut Peekable<impl Iterator<Item = (usize, char)>>,
-    ) -> ReadResult<LispString> {
-        // Our starting position should be the start-of-string character.
-        // Check and consume it (without panicking, we can return an error.)
-        let (_, start_ch) = it
-            .next()
-            .ok_or_else(|| {
-                ReadErr::Error(
-                    "internal error: expected start-of-string, but at end-of-file".to_owned(),
-                )
-            })
-            .and_then(|(position, ch)| {
-                if ch != '"' {
-                    Err(ReadErr::Error(format!(
-                        "internal error: expected start-of-string {:?} but found {:?}",
-                        '"', ch
-                    )))
-                } else {
-                    Ok((position, ch))
-                }
-            })?;
-
-        let mut string = String::new();
-        // Inner language for string literals:
-        // A backslash always escapes the next character.
-        // An unescaped double-quote terminates the string.
-        let mut escaped = false;
-        // We always consume a character.
-        while let Some((_, ch)) = it.next() {
-            if escaped {
-                escaped = false;
-                string.push(ch);
-            } else if ch == start_ch {
-                return Ok(LispString(string));
-            } else {
-                string.push(ch);
-                escaped = ch == '\\';
-            }
-        }
-
-        // If we exited the loop without seeing the end-of string explicitly,
-        // then we have incomplete input.
-        Err(ReadErr::Incomplete(format!(
-            "did not find string terminator"
-        )))
-    }
-
-    /// Consumes a Lisp number from the input iterator.
-    fn get_number(
-        it: &mut Peekable<impl Iterator<Item = (usize, char)>>,
-    ) -> ReadResult<LispNumber> {
-        let s = get_contguous(it);
-        // TODO: We only support i64 for numbers for now.
-        let value: Result<i64, _> = s.parse();
-
-        // There's only one kind of "incomplete" error I can think of for reading numbers:
-        // If the user wrote `-` and that's all, then that would be interpreted as an unparseable
-        // negative number.
-        // I could be pedantic here and return "Incomplete"... but in practice, whatever is calling
-        // this should probably wait for a newline or similar to parse anyway.
-        // We'll leave this as a TODO / known-bug unless someone runs in to it.
-
-        match value {
-            Ok(v) => Ok(LispNumber(v)),
-            Err(e) => Err(ReadErr::Error(format!(
-                "could not parse string \"{}\" as a number: {}",
-                s, e
-            ))),
-        }
-    }
-
-    /// Consumes a Lisp number from the input iterator.
-    fn get_symbol(
-        it: &mut Peekable<impl Iterator<Item = (usize, char)>>,
-    ) -> ReadResult<LispSymbol> {
-        let symbol = get_contguous(it);
-        // There's no "incomplete" version for a symbol; it's either there, or isn't.
-        symbol
-            .parse()
-            .map_err(|v| ReadErr::Error(format!("failed to parse symbol: {}", v)))
-    }
-
-    /// Consumes a stream of non-terminating characters (not whitespace or parens) from the input.
-    /// This is an internal routine for numbers and symbols, both of which are delimited in this way.
-    fn get_contguous(it: &mut Peekable<impl Iterator<Item = (usize, char)>>) -> String {
-        // This is pretty simple; we just have to keep pulling until we hit a token terminator.
-        let mut string = String::new();
-        while let Some((_, ch)) = it.peek() {
-            let ch = ch;
-            if *ch == '(' || *ch == ')' || ch.is_whitespace() {
-                break;
-            } else {
-                string.push(*ch);
-                it.next();
-            }
-        }
-        string
-    }
-}
-
-mod parse {
+/*mod parse {
     use crate::prelude::*;
 
     use super::{
@@ -345,153 +138,12 @@ mod parse {
         // Stack size is 0; implies we didn't have any input.
         Ok(None)
     }
-}
+}*/
 
+/*
 #[cfg(test)]
 mod tests {
-    use super::tokens::*;
     use super::*;
-
-    #[test]
-    fn tokenize_atoms() -> Result<(), ReadErr> {
-        let input = "hello \"hi\" world 24601 -6";
-        let output: Vec<Token> = tokenize(input)?.into_iter().map(|v| v.token).collect();
-
-        let want = &[
-            Token::Atom(Atom::Symbol("HeLlO".parse().unwrap())),
-            Token::Atom(Atom::String("hi".parse().unwrap())),
-            Token::Atom(Atom::Symbol("world".parse().unwrap())),
-            Token::Atom(Atom::Number(LispNumber(24601))),
-            Token::Atom(Atom::Number(LispNumber(-6))),
-        ];
-
-        assert_eq!(output.len(), want.len());
-
-        for ((i, got), want) in output.iter().enumerate().zip(want.iter()) {
-            assert_eq!(got, want, "unexpected token in case {}", i);
-        }
-        Ok(())
-    }
-    #[test]
-    fn tokenize_parens() -> Result<(), ReadErr> {
-        let input = "(1)( 2 ) (hello) ( hello (\"hi\") (( \"hi\" )))";
-        let output: Vec<Token> = tokenize(input)?.into_iter().map(|v| v.token).collect();
-
-        let want = &[
-            Token::LParen,
-            Token::Atom(Atom::Number(LispNumber(1))),
-            Token::RParen,
-            Token::LParen,
-            Token::Atom(Atom::Number(LispNumber(2))),
-            Token::RParen,
-            Token::LParen,
-            Token::Atom(Atom::Symbol("hello".parse().unwrap())),
-            Token::RParen,
-            Token::LParen,
-            Token::Atom(Atom::Symbol("hello".parse().unwrap())),
-            Token::LParen,
-            Token::Atom(Atom::String("hi".parse().unwrap())),
-            Token::RParen,
-            Token::LParen,
-            Token::LParen,
-            Token::Atom(Atom::String("hi".parse().unwrap())),
-            Token::RParen,
-            Token::RParen,
-            Token::RParen,
-        ];
-
-        assert_eq!(output.len(), want.len());
-
-        for ((i, got), want) in output.iter().enumerate().zip(want.iter()) {
-            assert_eq!(got, want, "unexpected token in case {}", i);
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn tokenize_unbalanced() -> Result<(), ReadErr> {
-        let input = ")))()(";
-        let output: Vec<Token> = tokenize(input)?.into_iter().map(|v| v.token).collect();
-
-        let want = &[
-            Token::RParen,
-            Token::RParen,
-            Token::RParen,
-            Token::LParen,
-            Token::RParen,
-            Token::LParen,
-        ];
-
-        assert_eq!(output.len(), want.len());
-
-        for ((i, got), want) in output.iter().enumerate().zip(want.iter()) {
-            assert_eq!(got, want, "unexpected token in case {}", i);
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn escaped_string() -> Result<(), ReadErr> {
-        let input = r#"
-               "hello \"sons\" \\slashdaughters a\nd others "   "#;
-        let output: Vec<Token> = tokenize(input)?.into_iter().map(|v| v.token).collect();
-        let trimmed = input.trim().trim_matches('"');
-
-        assert_eq!(output.len(), 1);
-        assert_eq!(
-            output[0],
-            Token::Atom(Atom::String(LispString(trimmed.to_owned())))
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn error_on_unexpected_stringend() {
-        let input = r#"(
-"hello1"
- "hello
-
-)"#;
-        // Our example ends with the string-start at line 3 (1-indexed),
-        // column 2 (1-indexed)
-
-        match tokenize(input) {
-            Ok(_) => panic!("expected error for input"),
-            Err(ReadErr::Error(e)) => panic!(
-                "got terminal error, expected incomplete error; got: {:?}",
-                e
-            ),
-            Err(ReadErr::Incomplete(e)) => {
-                // We got the error that we want...Does it have the useful debug info?
-                let want_line = "line 3";
-                let want_col = "column 2";
-                assert!(
-                    e.contains(want_line),
-                    "missing line info from error string: {:?}",
-                    e
-                );
-                assert!(
-                    e.contains(want_col),
-                    "missing column info from error string: {:?}",
-                    e
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn error_on_escaped_stringend() {
-        let input = "\"hello\\\"";
-
-        match tokenize(input) {
-            Ok(_) => panic!("expected error for input"),
-            Err(ReadErr::Error(e)) => panic!(
-                "got terminal error, expected incomplete error; got: {:?}",
-                e
-            ),
-            Err(ReadErr::Incomplete(_)) => (),
-        }
-    }
 
     #[test]
     fn parse_several_atoms() -> ReadResult<()> {
@@ -587,4 +239,4 @@ keep"
         assert_eq!(&got, &want);
         Ok(())
     }
-}
+}*/
