@@ -52,8 +52,6 @@ impl Ptr {
         self.tag() == Object::TAG_PAIR
     }
 
-
-
     pub fn new(idx: usize, tag: u8) -> Self {
         Ptr {
             combined_tag: ((idx as u32) << 3) | (tag as u32),
@@ -68,6 +66,12 @@ impl Ptr {
     #[inline]
     pub(super) fn idx(&self) -> usize {
         (self.combined_tag & !0b111) as usize >> 3
+    }
+}
+
+impl Default for Ptr {
+    fn default() -> Self {
+        Ptr { combined_tag: 0 }
     }
 }
 
