@@ -40,6 +40,10 @@ use self::bitset::BitSet;
 pub struct Storage {
     generation: RefCell<Generation>,
 
+    // TODO: Understand & implement this myself.
+    // Because symbols are interned, they are not generationed/lifetime-bound.
+    symbols: RefCell<string_interner::DefaultStringInterner>,
+
     roots: RefCell<Vec<StoredPtr>>,
 
     high_water: StorageStats,
@@ -75,9 +79,6 @@ macro_rules! run_gc {
 struct Generation {
     objects: Vec<StoredValue>,
     string_data: Vec<u8>,
-
-    // TODO: Understand & implement this myself.
-    symbols: string_interner::DefaultStringInterner,
 }
 
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
@@ -85,18 +86,6 @@ pub struct StorageStats {
     pub objects: usize,
     pub string_data: usize,
     pub symbols: usize,
-}
-
-impl std::ops::Sub for StorageStats {
-    type Output = StorageStats;
-
-    fn sub(self, rhs: Self) -> Self::Output {
-        StorageStats {
-            objects: self.objects - rhs.objects,
-            string_data: self.string_data - rhs.string_data,
-            symbols: self.symbols - rhs.symbols,
-        }
-    }
 }
 
 impl Generation {
@@ -147,7 +136,7 @@ impl Storage {
         StorageStats {
             objects: gen.objects.len(),
             string_data: gen.string_data.len(),
-            symbols: gen.symbols.len(),
+            symbols: self.symbols.borrow().len(),
         }
     }
     pub fn max_stats(&self) -> StorageStats {
@@ -156,10 +145,11 @@ impl Storage {
 
     /// Add a symbol to the symbol table.
     fn put_symbol<'a>(&'a self, symbol: &str) -> Ptr<'a> {
-        let mut gen = self.generation.borrow_mut();
         let s = Symbol {
-            symbol: gen.symbols.get_or_intern(symbol),
+            symbol: self.symbols.borrow_mut().get_or_intern(symbol),
         };
+
+        let mut gen = self.generation.borrow_mut();
         let raw = gen.put_object(Object::Symbol(s));
         self.bind(raw)
     }
@@ -211,14 +201,15 @@ impl Storage {
 
     /// Run a garbage-collection pass, based on the provided roots.
     pub fn gc(&mut self) {
+        let current_stats = self.current_stats();
         // Soft-destructure:
         let last_gen = self.generation.take();
         let old_roots = self.roots.take();
         self.high_water = StorageStats {
             // Update stats before compaction:
-            objects: max(self.high_water.objects, last_gen.objects.len()),
-            string_data: max(self.high_water.string_data, last_gen.string_data.len()),
-            symbols: max(self.high_water.symbols, last_gen.symbols.len()),
+            objects: max(self.high_water.objects, current_stats.objects),
+            string_data: max(self.high_water.string_data, current_stats.string_data),
+            symbols: max(self.high_water.symbols, current_stats.symbols),
         };
         (*self.generation.get_mut(), *self.roots.get_mut()) = gc(last_gen, old_roots);
     }
@@ -237,7 +228,6 @@ fn gc(mut last_gen: Generation, roots: Vec<StoredPtr>) -> (Generation, Vec<Store
     let mut queue: VecDeque<StoredPtr> = roots.iter().cloned().collect();
 
     let mut next_gen = Generation {
-        symbols: Default::default(),
         // We'll never shrink below our number of live objects at _last_ GC.
         // We could apply some hysteresis here, but... eh, TODO.
         objects: Vec::with_capacity(last_gen.objects.len()),
