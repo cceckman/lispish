@@ -1,7 +1,7 @@
 //! Module for extracting Lisp tokens from an input stream.
 
 use crate::reader::ReadResult;
-use crate::reader::*;
+use crate::{data, reader::*};
 
 /// A Lisp token.
 ///
@@ -14,8 +14,8 @@ pub enum Token {
     Quote,
     String(String),
     Symbol(String),
-    Integer(isize),
-    Float(f64),
+    Integer(data::Integer),
+    Float(data::Float),
 }
 
 /// A token along with its starting position in the input stream.
@@ -215,7 +215,7 @@ fn get_next_token(input: &[u8]) -> ReadResult<NextToken<'_>> {
     if let Some(s) = regex::integer().find(input) {
         let s = std::str::from_utf8(s.as_bytes())
             .expect("internal error: regex recognized integer that was not utf-8");
-        let int: isize = s.parse().map_err(|e| {
+        let int: data::Integer = s.parse().map_err(|e| {
             ReadErr::Error(format!("failed to convert \"{}\" into integer: {}", s, e))
         })?;
         let remainder = &input[s.len()..];
@@ -229,7 +229,7 @@ fn get_next_token(input: &[u8]) -> ReadResult<NextToken<'_>> {
     if let Some(s) = regex::float().find(input) {
         let s = std::str::from_utf8(s.as_bytes())
             .expect("internal error: regex recognized float that was not utf-8");
-        let float: f64 = s.parse().map_err(|e| {
+        let float: data::Float = s.parse().map_err(|e| {
             ReadErr::Error(format!("failed to convert \"{}\" into float: {}", s, e))
         })?;
         let remainder = &input[s.len()..];

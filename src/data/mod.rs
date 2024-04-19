@@ -33,6 +33,8 @@ use std::{
 mod objects;
 pub use objects::*;
 
+use crate::eval::Builtin;
+
 use self::bitset::BitSet;
 
 /// Storage allows representing all persistent objects.
@@ -144,7 +146,7 @@ impl Storage {
     }
 
     /// Add a symbol to the symbol table.
-    fn put_symbol<'a>(&'a self, symbol: &str) -> Ptr<'a> {
+    pub fn put_symbol<'a>(&'a self, symbol: &str) -> Ptr<'a> {
         let s = Symbol {
             symbol: self.symbols.borrow_mut().get_or_intern(symbol),
         };
@@ -329,6 +331,8 @@ union StoredValue {
     symbol: Symbol,
     string: StoredString,
 
+    builtin: Builtin,
+
     /// Pointer into the "next" arena, for copied-out objects.
     tombstone: usize,
 }
@@ -372,6 +376,8 @@ impl StoredPtr {
     const TAG_SYMBOL: u8 = 4;
     const TAG_PAIR: u8 = 5;
 
+    const TAG_BUILTIN: u8 = 7;
+
     fn new(idx: usize, tag: u8) -> Self {
         StoredPtr {
             combined_tag: ((idx as u32) << 3) | (tag as u32),
@@ -413,6 +419,11 @@ impl StoredPtr {
     fn is_pair(&self) -> bool {
         self.tag() == StoredPtr::TAG_PAIR
     }
+    #[inline]
+    fn is_builtin(&self) -> bool {
+        self.tag() == StoredPtr::TAG_BUILTIN
+    }
+
 }
 
 impl std::fmt::Debug for StoredPtr {

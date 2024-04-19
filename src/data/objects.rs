@@ -1,5 +1,7 @@
 use std::{marker::PhantomData, ops::Range};
 
+use crate::eval::Builtin;
+
 use super::{Bind, Storage, StoredPair, StoredPtr, StoredString, StoredValue};
 
 ///! Lisp object types.
@@ -14,6 +16,8 @@ pub enum Object<'a> {
     String(LString<'a>) = StoredPtr::TAG_STRING,
     Symbol(Symbol) = StoredPtr::TAG_SYMBOL,
     Pair(Pair<'a>) = StoredPtr::TAG_PAIR,
+
+    Builtin(Builtin) = StoredPtr::TAG_BUILTIN,
     // TODO:
     // - Lisp Function
     // - Builtin (primitive / form)
@@ -27,6 +31,10 @@ pub struct Ptr<'a> {
 }
 
 impl Ptr<'_> {
+    pub fn nil<'a>() -> Ptr<'a> {
+        Default::default()
+    }
+
     #[inline]
     pub fn is_nil(&self) -> bool {
         self.raw.is_nil()
@@ -50,6 +58,10 @@ impl Ptr<'_> {
     #[inline]
     pub fn is_pair(&self) -> bool {
         self.raw.is_pair()
+    }
+    #[inline]
+    pub fn is_builtin(&self) -> bool {
+        self.raw.is_builtin()
     }
 
     #[inline]
@@ -136,6 +148,7 @@ impl Into<(StoredValue, u8)> for Object<'_> {
                 },
                 self.tag(),
             ),
+            Object::Builtin(f) => (StoredValue { builtin: f }, self.tag()),
         }
     }
 }
@@ -167,6 +180,7 @@ impl<'a> Object<'a> {
                 }
             }),
             StoredPtr::TAG_SYMBOL => Object::Symbol(unsafe { v.symbol }),
+            StoredPtr::TAG_BUILTIN => Object::Builtin(unsafe { v.builtin }),
             _ => panic!("invalid tag, possible data corruption"),
         }
     }

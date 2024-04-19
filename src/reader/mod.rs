@@ -34,6 +34,7 @@ pub type ReadResult<T> = Result<T, ReadErr>;
 
 
 mod token;
+mod parse;
 
 /// Attempt to read the provided input as an SExpression.
 ///
