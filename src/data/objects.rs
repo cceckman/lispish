@@ -1,20 +1,19 @@
-use std::ops::Range;
+use std::{marker::PhantomData, ops::Range};
 
-use super::StoredValue;
+use super::{Bind, Storage, StoredPair, StoredPtr, StoredString, StoredValue};
 
 ///! Lisp object types.
 
 /// Enum for a Lisp object.
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
-pub enum Object {
-    Nil = Object::TAG_NIL,
-    Symbol(Symbol) = Object::TAG_SYMBOL,
-    Integer(Integer) = Object::TAG_INTEGER,
-    Float(Float) = Object::TAG_FLOAT,
-    String(LString) = Object::TAG_STRING,
-    Pair(Pair) = Object::TAG_PAIR,
-
+pub enum Object<'a> {
+    Nil = StoredPtr::TAG_NIL,
+    Integer(Integer) = StoredPtr::TAG_INTEGER,
+    Float(Float) = StoredPtr::TAG_FLOAT,
+    String(LString<'a>) = StoredPtr::TAG_STRING,
+    Symbol(Symbol) = StoredPtr::TAG_SYMBOL,
+    Pair(Pair<'a>) = StoredPtr::TAG_PAIR,
     // TODO:
     // - Lisp Function
     // - Builtin (primitive / form)
@@ -22,64 +21,62 @@ pub enum Object {
 
 /// An ID for a stored object: a combination of pointer and type-tag.
 #[derive(Clone, Copy)]
-pub struct Ptr {
-    combined_tag: u32,
+pub struct Ptr<'a> {
+    pub(super) raw: StoredPtr,
+    store: PhantomData<&'a Storage>,
 }
 
-impl Ptr {
+impl Ptr<'_> {
     #[inline]
     pub fn is_nil(&self) -> bool {
-        self.tag() == Object::TAG_NIL
+        self.raw.is_nil()
     }
     #[inline]
     pub fn is_integer(&self) -> bool {
-        self.tag() == Object::TAG_INTEGER
-    }
-    #[inline]
-    pub fn is_symbol(&self) -> bool {
-        self.tag() == Object::TAG_SYMBOL
+        self.raw.is_integer()
     }
     #[inline]
     pub fn is_float(&self) -> bool {
-        self.tag() == Object::TAG_FLOAT
+        self.raw.is_float()
     }
     #[inline]
     pub fn is_string(&self) -> bool {
-        self.tag() == Object::TAG_STRING
+        self.raw.is_string()
+    }
+    #[inline]
+    pub fn is_symbol(&self) -> bool {
+        self.raw.is_symbol()
     }
     #[inline]
     pub fn is_pair(&self) -> bool {
-        self.tag() == Object::TAG_PAIR
-    }
-
-    pub fn new(idx: usize, tag: u8) -> Self {
-        Ptr {
-            combined_tag: ((idx as u32) << 3) | (tag as u32),
-        }
+        self.raw.is_pair()
     }
 
     #[inline]
     pub(super) fn tag(&self) -> u8 {
-        (self.combined_tag & 0b111) as u8
+        self.raw.tag()
     }
 
     #[inline]
     pub(super) fn idx(&self) -> usize {
-        (self.combined_tag & !0b111) as usize >> 3
+        self.raw.idx()
     }
 }
 
-impl Default for Ptr {
+impl Default for Ptr<'_> {
     fn default() -> Self {
-        Ptr { combined_tag: 0 }
+        Ptr {
+            raw: StoredPtr { combined_tag: 0 },
+            store: PhantomData,
+        }
     }
 }
 
-impl Object {
+impl Object<'_> {
     /// Create a nil object.
     /// Nil objects are never stored, so this can be constructed directly (for convienient consing)
-    pub fn nil() -> Ptr {
-        Ptr::new(0, Self::TAG_NIL)
+    pub fn nil() -> Ptr<'static> {
+        Ptr::default()
     }
 
     pub(super) fn tag(&self) -> u8 {
@@ -90,78 +87,95 @@ impl Object {
         // field, so we can read the discriminant without offsetting the pointer.
         unsafe { *<*const _>::from(self).cast::<u8>() }
     }
-
-    const TAG_NIL: u8 = 0;
-    const TAG_SYMBOL: u8 = 1;
-    const TAG_INTEGER: u8 = 2;
-    const TAG_FLOAT: u8 = 3;
-    const TAG_STRING: u8 = 4;
-    const TAG_PAIR: u8 = 5;
 }
 
-impl From<i64> for Object {
+impl From<i64> for Object<'_> {
     fn from(value: i64) -> Self {
         Object::Integer(value)
     }
 }
 
-impl From<f64> for Object {
+impl From<f64> for Object<'_> {
     fn from(value: f64) -> Self {
         Object::Float(value)
     }
 }
 
-impl From<Pair> for Object {
-    fn from(value: Pair) -> Self {
+impl<'a> From<Pair<'a>> for Object<'a> {
+    fn from(value: Pair<'a>) -> Self {
         Object::Pair(value)
     }
 }
 
-impl From<Symbol> for Object {
+impl From<Symbol> for Object<'_> {
     fn from(value: Symbol) -> Self {
         Object::Symbol(value)
     }
 }
 
-impl From<LString> for Object {
-    fn from(value: LString) -> Self {
+impl<'a> From<LString<'a>> for Object<'a> {
+    fn from(value: LString<'a>) -> Self {
         Object::String(value)
     }
 }
 
-impl Into<(StoredValue, u8)> for Object {
+impl Into<(StoredValue, u8)> for Object<'_> {
     fn into(self) -> (StoredValue, u8) {
         match self {
             Object::Nil => (StoredValue { tombstone: 0 }, self.tag()),
             Object::Symbol(s) => (StoredValue { symbol: s }, self.tag()),
             Object::Integer(i) => (StoredValue { integer: i }, self.tag()),
             Object::Float(f) => (StoredValue { float: f }, self.tag()),
-            Object::String(s) => (StoredValue { string: s }, self.tag()),
-            Object::Pair(p) => (StoredValue { pair: p }, self.tag()),
+            Object::String(s) => (StoredValue { string: s.raw }, self.tag()),
+            Object::Pair(p) => (
+                StoredValue {
+                    pair: StoredPair {
+                        car: p.car.raw,
+                        cdr: p.cdr.raw,
+                    },
+                },
+                self.tag(),
+            ),
         }
     }
 }
 
-impl From<(StoredValue, u8)> for Object {
-    fn from((v, tag): (StoredValue, u8)) -> Self {
-        match tag {
-            Object::TAG_NIL => Object::Nil,
-            Object::TAG_INTEGER => Object::Integer(unsafe { v.integer }),
-            Object::TAG_FLOAT => Object::Float(unsafe { v.float }),
-            Object::TAG_PAIR => Object::Pair(unsafe { v.pair }),
-            Object::TAG_STRING => Object::String(unsafe { v.string }),
-            Object::TAG_SYMBOL => Object::Symbol(unsafe { v.symbol }),
-            _ => panic!("invalid tag, possible data corruption")
+impl<'a> Object<'a> {
+    pub(super) fn new(p: Ptr<'a>, v: StoredValue) -> Self {
+        match p.tag() {
+            StoredPtr::TAG_NIL => Object::Nil,
+            StoredPtr::TAG_INTEGER => Object::Integer(unsafe { v.integer }),
+            StoredPtr::TAG_FLOAT => Object::Float(unsafe { v.float }),
+            StoredPtr::TAG_PAIR => Object::Pair({
+                let raw = unsafe { v.pair };
+                Pair {
+                    car: Ptr {
+                        raw: raw.car,
+                        store: p.store,
+                    },
+                    cdr: Ptr {
+                        raw: raw.cdr,
+                        store: p.store,
+                    },
+                }
+            }),
+            StoredPtr::TAG_STRING => Object::String({
+                let raw = unsafe { v.string };
+                LString {
+                    raw,
+                    store: p.store,
+                }
+            }),
+            StoredPtr::TAG_SYMBOL => Object::Symbol(unsafe { v.symbol }),
+            _ => panic!("invalid tag, possible data corruption"),
         }
     }
 }
-
-
 
 pub type Integer = i64;
 pub type Float = f64;
 
-impl std::fmt::Debug for Ptr {
+impl std::fmt::Debug for Ptr<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Id")
             .field("idx", &self.idx())
@@ -170,34 +184,17 @@ impl std::fmt::Debug for Ptr {
     }
 }
 
-
 #[derive(Debug, Clone, Copy)]
-pub struct Pair {
-    pub car: Ptr,
-    pub cdr: Ptr,
+pub struct Pair<'a> {
+    pub car: Ptr<'a>,
+    pub cdr: Ptr<'a>,
 }
 
-impl Pair {
-    pub fn cons(car: Ptr, cdr: Ptr) -> Self {
-        Self {
-            car, cdr
-        }
+impl<'a> Pair<'a> {
+    pub fn cons(car: Ptr<'a>, cdr: Ptr<'a>) -> Self {
+        Self { car, cdr }
     }
 }
-
-#[derive(Debug, Clone, Copy)]
-pub struct Function {
-    // TODO consider while building out eval; sketch:
-    // Environment consists of a pair, "head of argument list" (list of symbols, need resolution),
-    // and "head of lexical environment"
-    // Body is a list of expressions- the SExpr tree of the body
-    pub environment: Ptr,
-    pub body: Ptr,
-}
-
-
-#[derive(Debug, Clone, Copy)]
-pub struct Builtin { }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Symbol {
@@ -205,15 +202,50 @@ pub struct Symbol {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct LString {
-    pub offset: u32,
-    pub length: u32,
+pub struct LString<'a> {
+    raw: StoredString,
+    store: PhantomData<&'a Storage>,
 }
 
-impl LString {
+impl LString<'_> {
+    pub fn len(&self) -> u32 {
+        self.raw.length
+    }
+
     pub(super) fn range(&self) -> Range<usize> {
-        let start = self.offset as usize;
-        let end = (self.offset+self.length) as usize;
-        start..end
+        self.raw.range()
+    }
+}
+
+impl<'a> Bind<'a> for LString<'a> {
+    type Free = StoredString;
+
+    fn bind(_store: &'a Storage, raw: Self::Free) -> Self {
+        Self {
+            raw,
+            store: PhantomData,
+        }
+    }
+}
+
+impl<'a> Bind<'a> for Ptr<'a> {
+    type Free = StoredPtr;
+
+    fn bind(_store: &'a Storage, raw: Self::Free) -> Self {
+        Self {
+            raw,
+            store: PhantomData,
+        }
+    }
+}
+
+impl<'a> Bind<'a> for Pair<'a> {
+    type Free = StoredPair;
+
+    fn bind(store: &'a Storage, raw: Self::Free) -> Self {
+        Self {
+            car: Ptr::bind(store, raw.car),
+            cdr: Ptr::bind(store, raw.cdr),
+        }
     }
 }
