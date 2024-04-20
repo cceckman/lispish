@@ -4,7 +4,7 @@
 use std::io::{BufRead, Write};
 
 use data::Storage;
-use eval::create_env_stack;
+use eval::{create_env_stack, eval};
 use reader::ReadErr;
 
 pub mod reader;
@@ -18,27 +18,27 @@ mod eval;
 /// and returns an exit code on success.
 pub fn repl(
     program_input: &mut impl BufRead,
-    write: &mut impl Write,
-    err: &mut impl Write,
+    eval_input: &mut impl BufRead,
+    stdout: &mut impl Write,
+    stderr: &mut impl Write,
 ) -> std::io::Result<i32> {
     let mut store = Storage::default();
-    let mut env = create_env_stack(&store);
+    store.borrow_roots_mut().environment_stack = create_env_stack(&store);
     let mut gc_flag = false;
 
     let mut input_buffer = String::new();
     loop {
         // We're honest here: we only offer the prompt after we're done with GC.
         if gc_flag {
-            env = run_gc!(store, [env]).next().expect("should have exactly one root for env stack");
+            store.gc();
             gc_flag = false;
         }
 
         // Offer a prompt:
         if input_buffer.is_empty() {
-            err.write("=> ".as_bytes())?;
-            err.flush()?;
+            stderr.write("=> ".as_bytes())?;
+            stderr.flush()?;
         }
-
 
         // Try to parse the input buffer so far.
         //
@@ -50,8 +50,8 @@ pub fn repl(
         // But we're not there yet.
         match program_input.read_line(&mut input_buffer)? {
             0 => {
-                err.write("End of input.\nNolite te Bastardes Carborundorum.\n".as_bytes())?;
-                err.flush()?;
+                stderr.write("End of input.\nNolite te Bastardes Carborundorum.\n".as_bytes())?;
+                stderr.flush()?;
                 return Ok(0);
             }
             _ => (),
@@ -65,8 +65,8 @@ pub fn repl(
             },
             Err(ReadErr::Error(e)) => {
                 tracing::error!("error in tokenizing: {}", e);
-                write!(err, "error in tokenizing: {}", e)?;
-                err.flush()?;
+                writeln!(stderr, "error in tokenizing: {}", e)?;
+                stderr.flush()?;
                 // The input buffer is bad; discard it.
                 input_buffer.clear();
                 continue;
@@ -84,8 +84,8 @@ pub fn repl(
             },
             Err(ReadErr::Error(e)) => {
                 tracing::error!("error in parsing: {}", e);
-                write!(err, "error in parsing: {}", e)?;
-                err.flush()?;
+                writeln!(stderr, "error in parsing: {}", e)?;
+                stderr.flush()?;
                 // The input buffer is bad; discard it.
                 // We'll also discard the body (via GC).
                 input_buffer.clear();
@@ -93,10 +93,12 @@ pub fn repl(
             }
         };
 
+        // We've parsed successfully. We're going to run this input- discard it.
+        input_buffer.clear();
 
-
-
-
-
+        // We have a body! Evaluate it.
+        store.borrow_roots_mut().evaluation_stack = body;
+        // TODO pretty-print errors, have an error enum, etc etc.
+        eval(&mut store, eval_input, stdout, stderr).unwrap();
     }
 }

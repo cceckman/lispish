@@ -1,7 +1,7 @@
 //! Render an unevaluated Lisp tree into:
 //! - Lisp on stdout, i.e. a mirror of the input
 //! - Debug on stderr - the internal representation from the `lispish` crate.
-//! 
+//!
 //! The debug format is given by the defaults of the `derive(Debug)` macro in Rust.
 //!
 //!
@@ -9,13 +9,18 @@
 //! <input.lisp lisp_to_debug
 //! ```
 
-use std::io::Read;
+use std::io::Cursor;
 
 fn main() {
-    let mut input = std::io::stdin().lock();
-    let mut bytes = Vec::new();
-    input
-        .read_to_end(&mut bytes)
-        .expect("error: could not read input");
-    let _: String = String::from_utf8(bytes).expect("error: input is not UTF-8");
+    let mut stdin = std::io::stdin().lock();
+    let mut stdout = std::io::stdout().lock();
+    let mut stderr = std::io::stderr().lock();
+
+    lispish::repl(
+        &mut stdin,
+        &mut Cursor::new(&[0u8]),
+        &mut stdout,
+        &mut stderr,
+    )
+    .expect("unexpected error");
 }
