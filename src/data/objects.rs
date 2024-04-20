@@ -131,6 +131,12 @@ impl<'a> From<LString<'a>> for Object<'a> {
     }
 }
 
+impl From<Builtin> for Object<'_> {
+    fn from(value: Builtin) -> Self {
+        Object::Builtin(value)
+    }
+}
+
 impl Into<(StoredValue, u8)> for Object<'_> {
     fn into(self) -> (StoredValue, u8) {
         match self {

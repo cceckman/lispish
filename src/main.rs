@@ -17,6 +17,5 @@ fn main() {
     input
         .read_to_end(&mut bytes)
         .expect("error: could not read input");
-    let s: String = String::from_utf8(bytes).expect("error: input is not UTF-8");
-    let _ = lispish::reader::read(&s);
+    let _: String = String::from_utf8(bytes).expect("error: input is not UTF-8");
 }

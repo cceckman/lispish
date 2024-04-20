@@ -57,7 +57,7 @@ pub struct Storage {
 /// # use lispish::data::Storage;
 /// # use lispish::data::Ptr;
 /// # use std::iter::Iterator;
-/// fn run_gc<'a, 'b, 'c>(store: &'b mut Storage, roots: impl Iterator<Item=Ptr<'a>>) -> impl Iterator<Item=Ptr<'c>> {
+/// fn run_gc<'a, 'b, 'c>(store: &'b mut Storage, roots: impl IntoIterator<Item=Ptr<'a>>) -> impl Iterator<Item=Ptr<'c>> {
 /// # std::iter::empty()
 /// # }
 /// ```
@@ -68,6 +68,7 @@ pub struct Storage {
 ///     fn gc(store, &'a)
 /// where 'a is the lifetime of `store`.
 // TODO: Is this what Pin<> is for? Kinda, except that we're also consuming it.
+#[macro_export]
 macro_rules! run_gc {
     ($store:expr, $roots:expr) => {{
         ($store).return_roots($roots);
@@ -193,8 +194,8 @@ impl Storage {
     /// Because Ptr<>s borrow &self, all of them must be "returned" before performing a GC pass.
     /// The GC routine produces a new Storage from which roots may be taken;
     /// they are reported in the same order as they originally appeared when stored.
-    pub fn return_roots<'a>(&'a self, roots: impl Iterator<Item = Ptr<'a>>) {
-        *self.roots.borrow_mut() = roots.map(|x| x.raw).collect();
+    pub fn return_roots<'a>(&'a self, roots: impl IntoIterator<Item = Ptr<'a>>) {
+        *self.roots.borrow_mut() = roots.into_iter().map(|x| x.raw).collect();
     }
 
     pub fn retrieve_roots<'a>(&'a self) -> impl 'a + Iterator<Item = Ptr<'a>> {
@@ -227,7 +228,7 @@ fn gc(mut last_gen: Generation, roots: Vec<StoredPtr>) -> (Generation, Vec<Store
     // TODO: Add trace output for debug
 
     let mut live_objects = BitSet::new();
-    let mut queue: VecDeque<StoredPtr> = roots.iter().cloned().collect();
+    let mut queue: VecDeque<StoredPtr> = roots.iter().cloned().filter(|v| !v.is_nil()).collect();
 
     let mut next_gen = Generation {
         // We'll never shrink below our number of live objects at _last_ GC.
@@ -277,6 +278,10 @@ fn gc(mut last_gen: Generation, roots: Vec<StoredPtr>) -> (Generation, Vec<Store
     queue.clear();
     let mut new_roots = Vec::with_capacity(roots.len());
     for old_ptr in roots.iter() {
+        if old_ptr.is_nil() {
+            new_roots.push(*old_ptr);
+            continue;
+        }
         queue.push_back(*old_ptr);
         // All "live" objects in the old arena now contain a tombstone entry,
         // their index in the new arena.
@@ -508,7 +513,7 @@ mod tests {
             A.len() + B.len() + C.len()
         );
 
-        let ptrs : Vec<_> = run_gc!(store, ptrs.into_iter()).collect();
+        let ptrs : Vec<_> = run_gc!(store, ptrs).collect();
         assert_eq!(store.current_stats().objects, 3);
         if let Object::String(s) = store.get(ptrs[1]) {
             assert_eq!(store.get_string(&s).as_ref(), B);
@@ -550,10 +555,10 @@ mod tests {
         assert_eq!(store.current_stats().string_data, A.len() + B.len());
 
         let pre_stats = store.current_stats();
-        let stack : Vec<_> = run_gc!(store, stack.into_iter()).collect();
+        let stack : Vec<_> = run_gc!(store, stack).collect();
         assert_eq!(store.current_stats(), pre_stats);
 
-        let stack_top = run_gc!(store, [stack[0]].into_iter()).next().unwrap();
+        let stack_top = run_gc!(store, [stack[0]]).next().unwrap();
         // ('b b ()): objects are b, (b ()), and (b (b ()))
         assert_eq!(store.current_stats().string_data, B.len());
         assert_eq!(store.current_stats().objects, 3);
