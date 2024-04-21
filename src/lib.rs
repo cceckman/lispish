@@ -3,7 +3,7 @@
 
 use std::io::{BufRead, Write};
 
-use data::Storage;
+use data::{Pair, Storage};
 use eval::{create_env_stack, eval};
 use reader::ReadErr;
 
@@ -12,7 +12,6 @@ pub mod reader;
 pub mod data;
 
 mod eval;
-
 
 /// Runs a read-evaluate-print loop,
 /// and returns an exit code on success.
@@ -23,7 +22,7 @@ pub fn repl(
     stderr: &mut impl Write,
 ) -> std::io::Result<i32> {
     let mut store = Storage::default();
-    store.borrow_roots_mut().environment_stack = create_env_stack(&store);
+    store.set_root(create_env_stack(&store));
     let mut gc_flag = false;
 
     let mut input_buffer = String::new();
@@ -62,7 +61,7 @@ pub fn repl(
             Err(ReadErr::Incomplete(s)) => {
                 tracing::trace!("incomplete tokenization: {}", s);
                 continue;
-            },
+            }
             Err(ReadErr::Error(e)) => {
                 tracing::error!("error in tokenizing: {}", e);
                 writeln!(stderr, "error in tokenizing: {}", e)?;
@@ -81,7 +80,7 @@ pub fn repl(
             Err(ReadErr::Incomplete(s)) => {
                 tracing::trace!("incomplete parse: {}", s);
                 continue;
-            },
+            }
             Err(ReadErr::Error(e)) => {
                 tracing::error!("error in parsing: {}", e);
                 writeln!(stderr, "error in parsing: {}", e)?;
@@ -97,7 +96,7 @@ pub fn repl(
         input_buffer.clear();
 
         // We have a body! Evaluate it.
-        store.borrow_roots_mut().evaluation_stack = body;
+        store.set_root(store.put(Pair::cons(body, store.root())));
         // TODO pretty-print errors, have an error enum, etc etc.
         eval(&mut store, eval_input, stdout, stderr).unwrap();
     }

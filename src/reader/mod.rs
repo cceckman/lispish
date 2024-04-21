@@ -24,7 +24,6 @@ impl ReadErr {
             ReadErr::Error(e) => ReadErr::Error(format!("{}: {}", more.as_ref(), e)),
             ReadErr::Incomplete(e) => ReadErr::Incomplete(format!("{}: {}", more.as_ref(), e)),
         }
-
     }
 }
 
@@ -32,8 +31,8 @@ impl ReadErr {
 /// a T (token, expression, etc), or an error, or incomplete.
 pub type ReadResult<T> = Result<T, ReadErr>;
 
-pub use token::tokenize;
 pub use parse::parse;
+pub use token::tokenize;
 
-mod token;
 mod parse;
+mod token;

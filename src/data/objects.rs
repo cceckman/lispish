@@ -137,6 +137,17 @@ impl From<Builtin> for Object<'_> {
     }
 }
 
+impl<'a> TryInto<Pair<'a>> for Object<'a> {
+    type Error = &'static str;
+
+    fn try_into(self) -> Result<Pair<'a>, Self::Error> {
+        match self {
+            Object::Pair(p) => Ok(p),
+            _ => Err("object is not a pair")
+        }
+    }
+}
+
 impl Into<(StoredValue, u8)> for Object<'_> {
     fn into(self) -> (StoredValue, u8) {
         match self {

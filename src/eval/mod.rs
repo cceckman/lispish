@@ -38,7 +38,7 @@ pub fn create_env_stack<'a>(store: &'a Storage) -> Ptr<'a> {
     store.put(Pair::cons(top_env, env_stack))
 }
 
-enum Op{
+enum Op {
     EvalBody,
 }
 

@@ -25,37 +25,17 @@
 mod bitset;
 
 use std::{
-    cell::{Ref, RefCell, RefMut},
     cmp::max,
     collections::VecDeque,
     ops::Range,
 };
+use std::cell::{Ref, RefCell};
 mod objects;
 pub use objects::*;
 
 use crate::eval::Builtin;
 
 use self::bitset::BitSet;
-
-/// The current GC roots, part of the evaluation state.
-///
-// TODO: I really don't like this being part of the Storage.
-// Storage just cares about this being iterable, and collectable, from any N.
-// How can we make the access methods generic in a way that preserves meaning,
-// e.g. we can't confuse different Roots types, even when "roots" is serialized?
-// Can/should we parameterize Storage on a roots type?
-pub struct Roots<'a> {
-    pub environment_stack: Ptr<'a>,
-    pub evaluation_stack: Ptr<'a>,
-
-    storage: RefMut<'a, StoredRoots>,
-}
-
-#[derive(Default)]
-struct StoredRoots {
-    environment_stack: StoredPtr,
-    evaluation_stack: StoredPtr,
-}
 
 /// Storage allows representing all persistent objects.
 #[derive(Default)]
@@ -66,16 +46,9 @@ pub struct Storage {
     // Because symbols are interned, they are not generationed/lifetime-bound.
     symbols: RefCell<string_interner::DefaultStringInterner>,
 
-    roots: RefCell<StoredRoots>,
+    root: RefCell<StoredPtr>,
 
     high_water: StorageStats,
-}
-
-impl Drop for Roots<'_> {
-    fn drop(&mut self) {
-        self.storage.environment_stack = self.environment_stack.raw;
-        self.storage.evaluation_stack = self.evaluation_stack.raw;
-    }
 }
 
 /// Data that exists for a single "generation" (between GCs).
@@ -190,20 +163,14 @@ impl Storage {
         Object::new(ptr, stored)
     }
 
-    /// Get the GC roots. Roots<'a> is mutable borrow of the underlying value
-    /// (that Storage holds); it can be freely mutated, then dropped before a GC.
-    ///
-    /// Note that since Roots<'a> represents a mutable borrow of the root structure,
-    ///
-    /// 1. Only one Roots<'a> may be outstanding. Multiple borrow_roots_mut will panic.
-    /// 2. The Roots<'a> must be dropped before a GC.
-    pub fn borrow_roots_mut<'a>(&'a self) -> Roots<'a> {
-        let r = self.roots.borrow_mut();
-        Roots {
-            environment_stack: self.bind(r.environment_stack),
-            evaluation_stack: self.bind(r.evaluation_stack),
-            storage: r,
-        }
+    /// Get the current GC root.
+    /// Only one root may exist; the caller creates / destroys its own structure for this.
+    pub fn root<'a>(&'a self) -> Ptr<'a> {
+        self.bind(*self.root.borrow())
+    }
+
+    pub fn set_root<'a>(&'a self, root: Ptr<'a>) {
+        *self.root.borrow_mut() = root.raw;
     }
 
     /// Run a garbage-collection pass, based on the provided roots.
@@ -211,14 +178,14 @@ impl Storage {
         let current_stats = self.current_stats();
         // Soft-destructure:
         let last_gen = self.generation.take();
-        let old_roots = self.roots.take();
+        let old_root = self.root.take();
         self.high_water = StorageStats {
             // Update stats before compaction:
             objects: max(self.high_water.objects, current_stats.objects),
             string_data: max(self.high_water.string_data, current_stats.string_data),
             symbols: max(self.high_water.symbols, current_stats.symbols),
         };
-        (*self.generation.get_mut(), *self.roots.get_mut()) = gc(last_gen, old_roots);
+        (*self.generation.get_mut(), [*self.root.get_mut()]) = gc(last_gen, [old_root]);
     }
 }
 
@@ -228,14 +195,15 @@ impl Storage {
 ///
 /// All pointers in the environment should be passed in via roots.
 /// Pointers can change across a GC pass; the GC routine will fix up those in storage and those in `roots`.
-fn gc(mut last_gen: Generation, old_roots: StoredRoots) -> (Generation, StoredRoots) {
+fn gc<const NROOTS: usize>(
+    mut last_gen: Generation,
+    old_roots: [StoredPtr; NROOTS],
+) -> (Generation, [StoredPtr; NROOTS]) {
     // TODO: Add trace output for debug
 
     let mut live_objects = BitSet::new();
-    let mut queue: VecDeque<StoredPtr> = [old_roots.environment_stack, old_roots.evaluation_stack]
-        .into_iter()
-        .filter(|v| !v.is_nil())
-        .collect();
+    let mut queue: VecDeque<StoredPtr> =
+        old_roots.iter().cloned().filter(|v| !v.is_nil()).collect();
 
     let mut next_gen = Generation {
         // We'll never shrink below our number of live objects at _last_ GC.
@@ -283,22 +251,16 @@ fn gc(mut last_gen: Generation, old_roots: StoredRoots) -> (Generation, StoredRo
     // -    And we need to copy the string contents.
     // First case is easy, let's do it right quick,
     // while also forming the "new old pointers" list we'll need to update later.
-    let new_roots = {
-        let mut update_root = |old_ptr: StoredPtr| -> StoredPtr {
-            if old_ptr.is_nil() {
-                return old_ptr;
-            }
-            queue.push_back(old_ptr);
-            // All "live" objects in the old arena now contain a tombstone entry,
-            // their index in the new arena.
-            let new_idx = unsafe { last_gen.objects[old_ptr.idx()].tombstone };
-            StoredPtr::new(new_idx, old_ptr.tag())
-        };
-        StoredRoots {
-            environment_stack: update_root(old_roots.environment_stack),
-            evaluation_stack: update_root(old_roots.evaluation_stack),
+    let new_roots = old_roots.map(|old_ptr: StoredPtr| -> StoredPtr {
+        if old_ptr.is_nil() {
+            return old_ptr;
         }
-    };
+        queue.push_back(old_ptr);
+        // All "live" objects in the old arena now contain a tombstone entry,
+        // their index in the new arena.
+        let new_idx = unsafe { last_gen.objects[old_ptr.idx()].tombstone };
+        StoredPtr::new(new_idx, old_ptr.tag())
+    });
 
     // Now we have a list of "old" pointers in the heap to go through.
     next_gen.string_data.reserve_exact(string_length);
@@ -491,20 +453,24 @@ mod tests {
         assert_eq!(store.current_stats().objects, 3);
 
         {
-            let mut roots = store.borrow_roots_mut();
-            roots.environment_stack = one;
-            roots.evaluation_stack = two;
+            let root = store.put(Pair::cons(one, two));
+            store.set_root(root);
         }
         store.gc();
 
-        assert_eq!(store.current_stats().objects, 2);
-        let got_one = store.get(store.borrow_roots_mut().environment_stack);
+        assert_eq!(store.current_stats().objects, 3);
+
+        let Pair { car, cdr } = store
+            .get(store.root())
+            .try_into()
+            .expect("root should be a pair");
+        let got_one = store.get(car);
         if let Object::Integer(1) = got_one {
         } else {
             panic!("unexpected object: {:?}", got_one);
         }
 
-        let got_two = store.get(store.borrow_roots_mut().evaluation_stack);
+        let got_two = store.get(cdr);
         if let Object::Float(v) = got_two {
             if v != 2.0f64 {
                 panic!("unexpected float value: {}", v)
@@ -535,22 +501,20 @@ mod tests {
             panic!("unexpected object: {:?}", store.get(ptrs[1]));
         }
 
-        {
-            let mut roots = store.borrow_roots_mut();
-            roots.environment_stack = ptrs[1];
-            roots.evaluation_stack = ptrs[2];
-        }
+        store.set_root(store.put(Pair::cons(ptrs[1], ptrs[2])));
         store.gc();
 
-        assert_eq!(store.current_stats().objects, 2);
+        assert_eq!(store.current_stats().objects, 3);
         assert_eq!(store.current_stats().string_data, B.len() + C.len());
 
-        let new_ptr = store.borrow_roots_mut().evaluation_stack;
-
-        if let Object::String(s) = store.get(new_ptr) {
+        let Pair { cdr: got_c, .. } = store
+            .get(store.root())
+            .try_into()
+            .expect("root should be a pair");
+        if let Object::String(s) = store.get(got_c) {
             assert_eq!(store.get_string(&s).as_ref(), C);
         } else {
-            panic!("unexpected object: {:?}", store.get(new_ptr));
+            panic!("unexpected object: {:?}", store.get(got_c));
         }
     }
 
@@ -572,20 +536,23 @@ mod tests {
 
             let lsb = store.put(Pair::cons(b, ls1));
 
-            [lsb, lsa]
+            Pair::cons(lsa, lsb)
         };
         assert_eq!(store.current_stats().objects, 6);
         assert_eq!(store.current_stats().string_data, A.len() + B.len());
 
+        store.set_root(store.put(stack));
         let pre_stats = store.current_stats();
-        store.borrow_roots_mut().environment_stack = stack[0];
-        store.borrow_roots_mut().evaluation_stack = stack[1];
         store.gc();
         assert_eq!(store.current_stats(), pre_stats);
 
-        store.borrow_roots_mut().evaluation_stack = Ptr::nil();
+        let Pair { cdr: lsb, .. } = store
+            .get(store.root())
+            .try_into()
+            .expect("root should be a pair");
+        store.set_root(lsb);
         store.gc();
-        let stack_top = store.borrow_roots_mut().environment_stack;
+        let stack_top = store.root();
         // ('b b ()): objects are b, (b ()), and (b (b ()))
         assert_eq!(store.current_stats().string_data, B.len());
         assert_eq!(store.current_stats().objects, 3);

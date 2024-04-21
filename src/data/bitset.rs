@@ -2,13 +2,12 @@
 ///
 /// We'll start with a pretty basic implementation,
 /// then see if Roaring or something helps.
-#[derive(Clone,Debug,Default)]
+#[derive(Clone, Debug, Default)]
 pub struct BitSet {
     data: Vec<usize>,
 }
 
 impl BitSet {
-
     /// Creates a new, empty bitset.
     pub fn new() -> Self {
         Default::default()

@@ -37,7 +37,7 @@ pub fn tokenize(input: &str) -> ReadResult<Vec<TokenOffset>> {
     let mut column = 0;
     while input.len() > 0 {
         let next = get_next_token(input)
-            .map_err(|err| err.annotate(format!("at line {} column {}", line+1, column+1)))?;
+            .map_err(|err| err.annotate(format!("at line {} column {}", line + 1, column + 1)))?;
 
         if let Some(token) = next.token {
             result.push(TokenOffset::new(line, column, token));
@@ -108,13 +108,16 @@ mod regex {
             // repeatedly
             // We do _not_ require the trailing quote; we check that after consuming the
             // regex, so we can return "early end" if we haven't closed the quote.
-            Regex::new(r#"\A(?sR)"([\\][\\]|[\\]"|[^\"])*"#).expect("could not compile regex for string")
+            Regex::new(r#"\A(?sR)"([\\][\\]|[\\]"|[^\"])*"#)
+                .expect("could not compile regex for string")
         })
     }
 
     pub(super) fn integer() -> &'static Regex {
         static MATCH: OnceLock<Regex> = OnceLock::new();
-        MATCH.get_or_init(|| Regex::new(r#"\A-?[0-9]+"#).expect("could not compile regex for integer"))
+        MATCH.get_or_init(|| {
+            Regex::new(r#"\A-?[0-9]+"#).expect("could not compile regex for integer")
+        })
     }
 
     pub(super) fn float() -> &'static Regex {
@@ -203,7 +206,9 @@ fn get_next_token(input: &[u8]) -> ReadResult<NextToken<'_>> {
         let escaped_bytes = &s[1..];
         let escaped_string = std::str::from_utf8(escaped_bytes)
             .map_err(|_| ReadErr::Error("non-UTF-8 string".to_owned()))?;
-        let true_string = escaped_string.replace(r#"\\"#, r#"\"#).replace(r#"\""#, r#"""#);
+        let true_string = escaped_string
+            .replace(r#"\\"#, r#"\"#)
+            .replace(r#"\""#, r#"""#);
         let (lines, columns) = cursor_distance(true_string.as_bytes());
         return Ok(NextToken {
             token: Some(Token::String(true_string)),
@@ -278,10 +283,17 @@ mod tests {
     use crate::reader::ReadErr;
 
     #[test]
-    fn recognize_symbols() -> Result<(), String>{
-        for sym in ["hello", "hi", "tree->list", "operator<>", "Queryable?", "IMPORTANT!"] {
+    fn recognize_symbols() -> Result<(), String> {
+        for sym in [
+            "hello",
+            "hi",
+            "tree->list",
+            "operator<>",
+            "Queryable?",
+            "IMPORTANT!",
+        ] {
             let r = token::regex::symbol();
-            if ! r.is_match(sym.as_bytes()) {
+            if !r.is_match(sym.as_bytes()) {
                 return Err(format!("did not find symbol {}", sym));
             }
         }
@@ -439,7 +451,13 @@ mod tests {
         let tokens = tokenize(input).unwrap();
         assert_eq!(tokens.len(), 1);
         let token = &tokens[0];
-        assert_eq!(token.token, Token::String(r#""hello\"
-            "#.to_owned()));
+        assert_eq!(
+            token.token,
+            Token::String(
+                r#""hello\"
+            "#
+                .to_owned()
+            )
+        );
     }
 }
