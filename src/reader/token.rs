@@ -27,8 +27,7 @@ pub struct TokenOffset {
 }
 
 /// Split the input into its constituent tokens.
-pub fn tokenize(input: &str) -> ReadResult<Vec<TokenOffset>> {
-    let mut input = input.as_bytes();
+pub fn tokenize(mut input: &[u8]) -> ReadResult<Vec<TokenOffset>> {
     let mut result = Vec::new();
 
     // Position info for debug messages:
@@ -302,7 +301,7 @@ mod tests {
 
     #[test]
     fn tokenize_atoms() -> Result<(), ReadErr> {
-        let input = r#"hello "hi" world 24601 -6"#;
+        let input = br#"hello "hi" world 24601 -6"#;
         let output: Vec<Token> = tokenize(input)?.into_iter().map(|v| v.token).collect();
 
         let want = &[
@@ -322,7 +321,7 @@ mod tests {
     }
     #[test]
     fn tokenize_parens() -> Result<(), ReadErr> {
-        let input = "(1)( 2 ) (hello) ( hello (\"hi\") (( \"hi\" )))";
+        let input = b"(1)( 2 ) (hello) ( hello (\"hi\") (( \"hi\" )))";
         let output: Vec<Token> = tokenize(input)?.into_iter().map(|v| v.token).collect();
 
         let want = &[
@@ -358,7 +357,7 @@ mod tests {
 
     #[test]
     fn tokenize_unbalanced() -> Result<(), ReadErr> {
-        let input = ")))()(";
+        let input = b")))()(";
         let output: Vec<Token> = tokenize(input)?.into_iter().map(|v| v.token).collect();
 
         let want = &[
@@ -380,7 +379,7 @@ mod tests {
 
     #[test]
     fn error_on_unexpected_stringend() {
-        let input = r#"(
+        let input = br#"(
 "hello1"
  "hello
 
@@ -420,7 +419,7 @@ mod tests {
         // - An escaped backslash (which is a backslash, inside the string)
         // - An escaped quote (which is a quote, inside the string)
         // But no end-quote, so it's incomplete.
-        let input = r#"
+        let input = br#"
             "\"hello\\\"
         "#;
 
@@ -443,7 +442,7 @@ mod tests {
         // - An escaped quote (which is a quote, inside the string)
         // - A newline
         // - Several indents
-        let input = r#"
+        let input = br#"
             "\"hello\\\"
             "
         "#;

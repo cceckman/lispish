@@ -17,19 +17,15 @@
 //!  
 //! Variable-sized data (string and symbol) use their own allocators.
 //! -   Symbols are interned, and perpetual.
-//!     The returned symbol
+//!     TODO: Use intern ID instead of a separate object.
 //! -   String _objects_ provide ownership semantics over string _ranges_.
 //!     Strings use a ~typical allocator, with sizes rounded up to the nearest 8B.
 //!
 
 mod bitset;
 
-use std::{
-    cmp::max,
-    collections::VecDeque,
-    ops::Range,
-};
 use std::cell::{Ref, RefCell};
+use std::{cmp::max, collections::VecDeque, ops::Range};
 mod objects;
 pub use objects::*;
 
@@ -123,12 +119,23 @@ impl Storage {
     /// Add a symbol to the symbol table.
     pub fn put_symbol<'a>(&'a self, symbol: &str) -> Ptr<'a> {
         let s = Symbol {
-            symbol: self.symbols.borrow_mut().get_or_intern(symbol),
+            symbol: self
+                .symbols
+                .borrow_mut()
+                .get_or_intern(symbol.to_uppercase()),
         };
 
         let mut gen = self.generation.borrow_mut();
         let raw = gen.put_object(Object::Symbol(s));
         self.bind(raw)
+    }
+
+    /// Retrieve a symbol to the symbol table.
+    pub fn get_symbol<'a>(&'a self, idx: Symbol) -> Ref<'a, str> {
+        let symtab = self.symbols.borrow();
+        Ref::map(symtab, |v| {
+            v.resolve(idx.symbol).expect("retrieved nonexistent symbol")
+        })
     }
 
     /// Add a string to the string content.
@@ -335,7 +342,7 @@ impl StoredValue {
 /// A "raw" pointer, without lifetime data.
 /// This is the internal type for Storage; outside of storage,
 /// the Ptr type provides a lifetime bound.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Hash, PartialEq, Eq)]
 struct StoredPtr {
     combined_tag: u32,
 }

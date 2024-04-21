@@ -1,4 +1,4 @@
-use std::{marker::PhantomData, ops::Range};
+use std::{marker::PhantomData, ops::Range, path::Display};
 
 use crate::eval::Builtin;
 
@@ -24,10 +24,27 @@ pub enum Object<'a> {
 }
 
 /// An ID for a stored object: a combination of pointer and type-tag.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy,Hash, PartialEq, Eq)]
 pub struct Ptr<'a> {
     pub(super) raw: StoredPtr,
     store: PhantomData<&'a Storage>,
+}
+
+impl std::fmt::Display for Ptr<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let tag = match self.tag() {
+            StoredPtr::TAG_NIL => "nil",
+            StoredPtr::TAG_INTEGER => "i64",
+            StoredPtr::TAG_FLOAT=> "f64",
+            StoredPtr::TAG_STRING => "str",
+            StoredPtr::TAG_SYMBOL=> "sym",
+            StoredPtr::TAG_PAIR => "obj",
+
+            StoredPtr::TAG_BUILTIN=> "sys",
+            _ => "???"
+        };
+        write!(f, "{}#{}", tag, self.idx())
+    }
 }
 
 impl Ptr<'_> {
@@ -143,7 +160,7 @@ impl<'a> TryInto<Pair<'a>> for Object<'a> {
     fn try_into(self) -> Result<Pair<'a>, Self::Error> {
         match self {
             Object::Pair(p) => Ok(p),
-            _ => Err("object is not a pair")
+            _ => Err("object is not a pair"),
         }
     }
 }

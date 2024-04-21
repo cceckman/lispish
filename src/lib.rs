@@ -3,15 +3,27 @@
 
 use std::io::{BufRead, Write};
 
-use data::{Pair, Storage};
+use data::{Pair, Ptr, Storage};
 use eval::{create_env_stack, eval};
-use reader::ReadErr;
+use reader::{ReadErr, ReadResult};
 
 pub mod reader;
 
 pub mod data;
 
 mod eval;
+mod render;
+
+pub use render::render_store;
+
+/// Parse the string as a list of Lisp expressions (i.e. a body).
+pub fn parse_body<'a>(store: &'a Storage, input: &[u8]) -> ReadResult<Ptr<'a>> {
+        let tokens = reader::tokenize(input)?;
+        let body = reader::parse(store, tokens.into_iter())?;
+        Ok(body)
+}
+
+
 
 /// Runs a read-evaluate-print loop,
 /// and returns an exit code on success.
@@ -56,7 +68,7 @@ pub fn repl(
             _ => (),
         }
 
-        let tokens = match reader::tokenize(&input_buffer) {
+        let tokens = match reader::tokenize(input_buffer.as_bytes()) {
             Ok(t) => t,
             Err(ReadErr::Incomplete(s)) => {
                 tracing::trace!("incomplete tokenization: {}", s);

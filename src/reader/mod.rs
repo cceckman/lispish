@@ -1,5 +1,13 @@
 //! Support for reading LISP expressions from strings.
 
+use std::io::ErrorKind;
+
+pub use parse::parse;
+pub use token::tokenize;
+
+mod parse;
+mod token;
+
 /// Error type if a read does not complete.
 ///
 /// A reader may experience a true tokenizing/parsing error, e.g. "())", that no additional input can fix.
@@ -31,8 +39,17 @@ impl ReadErr {
 /// a T (token, expression, etc), or an error, or incomplete.
 pub type ReadResult<T> = Result<T, ReadErr>;
 
-pub use parse::parse;
-pub use token::tokenize;
+impl<T> From<ReadErr> for ReadResult<T> {
+    fn from(value: ReadErr) -> Self {
+        Err(value)
+    }
+}
 
-mod parse;
-mod token;
+impl From<ReadErr> for std::io::Error {
+    fn from(value: ReadErr) -> Self {
+        match value {
+            ReadErr::Incomplete(s) => std::io::Error::new(ErrorKind::BrokenPipe, s),
+            ReadErr::Error(s) => std::io::Error::new(ErrorKind::InvalidInput, s),
+        }
+    }
+}
