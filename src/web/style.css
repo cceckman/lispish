@@ -1,5 +1,10 @@
 
 main {
-	display: flexbox;
-	flex-direction: horizontal;
+	display: flex;
+	flex-direction: row;
+}
+
+div.history {
+	display: flex;
+	flex-direction: column;
 }

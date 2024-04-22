@@ -4,9 +4,11 @@ use crate::data::Storage;
 use crate::eval::create_env_stack;
 use crate::render_store;
 use axum::extract::Path;
-use axum::http::StatusCode;
-use axum::response::{IntoResponse, Result};
-use axum::routing::get;
+use axum::http::header::LOCATION;
+use axum::http::{HeaderName, StatusCode};
+use axum::response::{IntoResponse, ResponseParts, Result};
+use axum::routing::{get, post};
+use axum::Form;
 use std::collections::HashMap;
 use std::io::Write;
 use std::process::Stdio;
@@ -49,6 +51,14 @@ impl Session {
             last_active: Instant::now(),
             state: State::Idle(store),
         }
+    }
+
+    fn eval(&mut self, expression: &str) {
+        if expression.is_empty() {
+            return;
+        }
+        // TODO: Actually evaluate here!
+        self.history.push(expression.to_string());
     }
 
     fn render(&self) -> Result<impl IntoResponse, (StatusCode, String)> {
@@ -95,12 +105,22 @@ impl Session {
                     }
                     body {
                         main {
-                            div id="history" {
-                                textarea class="history latest" disabled=(tbcontent.is_some()) { @if let Some(tb) = tbcontent { (tb) } }
+                            form method="post" { div class="history" {
                                 @for history in self.history.iter() {
-                                    textarea class="history" disabled="true" { (history) }
+                                    textarea class="history" disabled { (history) }
                                 }
-                            }
+                                @if let Some(content) = tbcontent {
+                                    textarea class="history latest" disabled { (content) }
+                                } @else {
+                                    textarea class="history latest" name="expression" {  }
+                                }
+                                div id="control" {
+                                    input   type="submit"
+                                            value="Evaluate"
+                                            method="post"
+                                            formaction=(format!("/sessions/{}/eval", &self.name));
+                                }
+                            }}
                             div id="store" { (maud::PreEscaped(rendered)) }
                         }
                     }
@@ -117,17 +137,40 @@ struct SessionHandler {
 type SessionPtr = Arc<Mutex<Session>>;
 
 impl SessionHandler {
+    async fn session_ptr(&self, name: &str) -> SessionPtr {
+        let mut sessions = self.sessions.lock().await;
+        sessions
+            .entry(name.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(Session::new(name.to_string()))))
+            .clone()
+    }
+
     async fn get(
         sessions: axum::extract::State<SessionHandler>,
         Path(session): Path<String>,
     ) -> Result<impl IntoResponse, (StatusCode, String)> {
-        let mut sessions = sessions.0.sessions.lock().await;
-        let session_ptr = sessions
-            .entry(session.clone())
-            .or_insert_with(|| Arc::new(Mutex::new(Session::new(session))));
-        // We have an arc, wait until we're the only thread working on this session.
-        let session = session_ptr.lock().await;
+        let session = sessions.0.session_ptr(&session).await;
+        let session = session.lock().await;
         session.render()
+    }
+
+    async fn eval(
+        sessions: axum::extract::State<SessionHandler>,
+        Path(session_name): Path<String>,
+        Form(form): Form<HashMap<String, String>>,
+    ) -> Result<impl IntoResponse, (StatusCode, String)> {
+        let session = sessions.0.session_ptr(&session_name).await;
+        let mut session = session.lock().await;
+
+        if let Some(expression) = form.get("expression") {
+            session.eval(expression);
+        }
+
+        Ok((
+            StatusCode::SEE_OTHER,
+            [(LOCATION, format!("/sessions/{session_name}"))],
+            "",
+        ))
     }
 }
 
@@ -144,5 +187,6 @@ pub fn get_server() -> axum::Router {
             get(|| async { ([(axum::http::header::CONTENT_TYPE, "text/css")], STYLE) }),
         )
         .route("/sessions/:session", get(SessionHandler::get))
+        .route("/sessions/:session/eval", post(SessionHandler::eval))
         .with_state(sessions)
 }
