@@ -1,18 +1,19 @@
 //! Web server for interactive exploration
 
 use crate::data::Storage;
-use crate::eval::create_env_stack;
+use crate::eval::{self, initialize, Error, EvalEnvironment};
 use crate::render_store;
 use axum::extract::Path;
 use axum::http::header::LOCATION;
-use axum::http::{HeaderName, StatusCode};
-use axum::response::{IntoResponse, ResponseParts, Result};
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Result};
 use axum::routing::{get, post};
 use axum::Form;
 use std::collections::HashMap;
 use std::io::Write;
 use std::process::Stdio;
 use std::sync::Arc;
+use std::task::Poll;
 use std::time::Instant;
 use tokio::sync::Mutex;
 
@@ -25,7 +26,9 @@ struct Session {
     /// Sessions are eventually discarded.
     last_active: Instant,
 
-    history: Vec<String>,
+    history: Vec<(String, String)>,
+
+    output: String,
 
     /// State of the session.
     state: State,
@@ -35,36 +38,96 @@ enum State {
     /// Not currently evaluating an expression.
     /// The storage pointer reflects the top-level environment.
     Idle(Storage),
-    Eval {
-        store: Storage,
-        expression: String,
-    },
+    Eval(EvalEnvironment),
+}
+
+fn to_http_error(err: eval::Error) -> (StatusCode, String) {
+    match err {
+        Error::UserError(msg) => (StatusCode::BAD_REQUEST, format!("invalid input: {msg}")),
+        Error::Fault(msg) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("server error: {msg}"),
+        ),
+    }
 }
 
 impl Session {
     fn new(name: String) -> Self {
         let store = Storage::default();
-        store.set_root(create_env_stack(&store));
+        initialize(&store);
         Session {
             name,
             history: Vec::new(),
             last_active: Instant::now(),
             state: State::Idle(store),
+            output: String::new(),
         }
     }
 
-    fn eval(&mut self, expression: &str) {
-        if expression.is_empty() {
-            return;
+    /// Transition to "evaluating" state if not already there.
+    fn start_eval(&mut self, expression: &str) -> Result<(), eval::Error> {
+        let store = if let State::Idle(store) = &mut self.state {
+            std::mem::take(store)
+        } else {
+            return Ok(());
+        };
+        self.history.push((expression.to_owned(), "??".to_owned()));
+        match EvalEnvironment::start(store, expression) {
+            Err((store, error)) => {
+                self.state = State::Idle(store);
+                Err(error)
+            }
+            Ok(eval) => {
+                self.state = State::Eval(eval);
+                Ok(())
+            }
         }
-        // TODO: Actually evaluate here!
-        self.history.push(expression.to_string());
+    }
+
+    fn eval(&mut self, expression: &str) -> Result<(), (StatusCode, String)> {
+        if expression.is_empty() {
+            return Ok(());
+        }
+        self.start_eval(expression).map_err(to_http_error)?;
+
+        let printable_result = loop {
+            if let State::Eval(ref mut ctx) = self.state {
+                let result = ctx.step().map_err(to_http_error)?;
+                match result {
+                    Poll::Pending => continue,
+                    Poll::Ready(p) => break ctx.store().display(p),
+                }
+            } else {
+                // TODO: Fix this, we "know" we're in the right state at this point.
+                return Err(to_http_error(eval::Error::Fault(
+                    "state was not ready-for-eval".to_string(),
+                )));
+            }
+        };
+
+        // We've gotten a result from evaluation.
+        // Update state.
+        let result: Result<(), eval::Error>;
+        (self.state, result) = match self.state {
+            State::Eval(ctx) => match ctx.idle() {
+                Ok(store) => (State::Idle(store), Ok(())),
+                Err((ctx, err)) => (State::Eval(ctx), Err(err)),
+            },
+            State::Idle(store) => (State::Idle(store), Ok(())),
+        };
+        result.map_err(to_http_error)?;
+        // TODO: Should always be true...
+        if let Some((expression, _)) = self.history.pop() {
+            self.history.push((expression, printable_result))
+        }
+
+        Ok(())
     }
 
     fn render(&self) -> Result<impl IntoResponse, (StatusCode, String)> {
         let (store, tbcontent) = match &self.state {
             State::Idle(store) => (store, None),
-            State::Eval { store, .. } => (store, self.history.last()),
+            State::Eval(env) => (env.store(), self.history.last()),
         };
         let gv = render_store(store, []);
         // TODO: Work out how to make this async.
@@ -97,35 +160,42 @@ impl Session {
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
         Ok(maud::html!(
-                DOCTYPE
-                html {
-                    head {
-                        title { (self.name) }
-                        link rel="stylesheet" href="/style.css";
-                    }
-                    body {
-                        main {
-                            form method="post" { div class="history" {
-                                @for history in self.history.iter() {
-                                    textarea class="history" disabled { (history) }
-                                }
-                                @if let Some(content) = tbcontent {
-                                    textarea class="history latest" disabled { (content) }
-                                } @else {
-                                    textarea class="history latest" name="expression" {  }
-                                }
-                                div id="control" {
-                                    input   type="submit"
-                                            value="Evaluate"
-                                            method="post"
-                                            formaction=(format!("/sessions/{}/eval", &self.name));
-                                }
-                            }}
-                            div id="store" { (maud::PreEscaped(rendered)) }
+                    DOCTYPE
+                    html {
+                        head {
+                            title { (self.name) }
+                            link rel="stylesheet" href="/style.css";
+                        }
+                        body {
+                            main {
+                                form method="post" { div class="history" {
+                                    @for history in self.history.iter() {
+                                    div class="historyline" {
+                                        textarea class="expression" disabled { (history.0) }
+                                        p class="result" { (history.1) }
+                                    }
+        }
+                                    @if let Some(content) = tbcontent {
+                                        textarea class="history latest" disabled { (content.0) }
+                                    } @else {
+                                        textarea class="history latest" name="expression" {  }
+                                    }
+                                    div id="control" {
+                                        input   type="submit"
+                                                value="Evaluate"
+                                                method="post"
+                                                formaction=(format!("/sessions/{}/eval", &self.name));
+                                        input   type="submit"
+                                                value="Step"
+                                                method="post"
+                                                formaction=(format!("/sessions/{}/step", &self.name));
+                                    }
+                                }}
+                                div id="store" { (maud::PreEscaped(rendered)) }
+                            }
                         }
                     }
-                }
-        ))
+            ))
     }
 }
 
@@ -163,7 +233,7 @@ impl SessionHandler {
         let mut session = session.lock().await;
 
         if let Some(expression) = form.get("expression") {
-            session.eval(expression);
+            session.eval(expression)?;
         }
 
         Ok((
