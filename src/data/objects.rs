@@ -1,10 +1,9 @@
+//! Lisp object types
 use std::{marker::PhantomData, ops::Range};
 
 use crate::eval::Builtin;
 
 use super::{Bind, Storage, StoredPair, StoredPtr, StoredString, StoredValue};
-
-///! Lisp object types.
 
 /// Enum for a Lisp object.
 #[derive(Debug, Clone, Copy)]
@@ -24,7 +23,7 @@ pub enum Object<'a> {
 }
 
 /// An ID for a stored object: a combination of pointer and type-tag.
-#[derive(Clone, Copy,Hash, PartialEq, Eq)]
+#[derive(Clone, Copy, Hash, PartialEq, Eq)]
 pub struct Ptr<'a> {
     pub(super) raw: StoredPtr,
     store: PhantomData<&'a Storage>,
@@ -35,13 +34,13 @@ impl std::fmt::Display for Ptr<'_> {
         let tag = match self.tag() {
             StoredPtr::TAG_NIL => "nil",
             StoredPtr::TAG_INTEGER => "i64",
-            StoredPtr::TAG_FLOAT=> "f64",
+            StoredPtr::TAG_FLOAT => "f64",
             StoredPtr::TAG_STRING => "str",
-            StoredPtr::TAG_SYMBOL=> "sym",
+            StoredPtr::TAG_SYMBOL => "sym",
             StoredPtr::TAG_PAIR => "obj",
 
-            StoredPtr::TAG_BUILTIN=> "sys",
-            _ => "???"
+            StoredPtr::TAG_BUILTIN => "sys",
+            _ => "???",
         };
         write!(f, "{}#{}", tag, self.idx())
     }
@@ -165,14 +164,14 @@ impl<'a> TryInto<Pair<'a>> for Object<'a> {
     }
 }
 
-impl Into<(StoredValue, u8)> for Object<'_> {
-    fn into(self) -> (StoredValue, u8) {
-        match self {
-            Object::Nil => (StoredValue { tombstone: 0 }, self.tag()),
-            Object::Symbol(s) => (StoredValue { symbol: s }, self.tag()),
-            Object::Integer(i) => (StoredValue { integer: i }, self.tag()),
-            Object::Float(f) => (StoredValue { float: f }, self.tag()),
-            Object::String(s) => (StoredValue { string: s.raw }, self.tag()),
+impl From<Object<'_>> for (StoredValue, u8) {
+    fn from(object: Object<'_>) -> Self {
+        match object {
+            Object::Nil => (StoredValue { tombstone: 0 }, object.tag()),
+            Object::Symbol(s) => (StoredValue { symbol: s }, object.tag()),
+            Object::Integer(i) => (StoredValue { integer: i }, object.tag()),
+            Object::Float(f) => (StoredValue { float: f }, object.tag()),
+            Object::String(s) => (StoredValue { string: s.raw }, object.tag()),
             Object::Pair(p) => (
                 StoredValue {
                     pair: StoredPair {
@@ -180,9 +179,9 @@ impl Into<(StoredValue, u8)> for Object<'_> {
                         cdr: p.cdr.raw,
                     },
                 },
-                self.tag(),
+                object.tag(),
             ),
-            Object::Builtin(f) => (StoredValue { builtin: f }, self.tag()),
+            Object::Builtin(f) => (StoredValue { builtin: f }, object.tag()),
         }
     }
 }
@@ -258,6 +257,9 @@ pub struct LString<'a> {
 impl LString<'_> {
     pub fn len(&self) -> u32 {
         self.raw.length
+    }
+    pub fn is_empty(&self) -> bool {
+        self.raw.len() == 0
     }
 
     pub(super) fn range(&self) -> Range<usize> {

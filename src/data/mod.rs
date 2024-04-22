@@ -85,7 +85,7 @@ impl Generation {
     }
 
     fn get(&self, ptr: StoredPtr) -> StoredValue {
-        let idx = ptr.idx() as usize;
+        let idx = ptr.idx();
         assert!(idx < self.objects.len());
         self.objects[idx]
     }
@@ -117,7 +117,7 @@ impl Storage {
     }
 
     /// Add a symbol to the symbol table.
-    pub fn put_symbol<'a>(&'a self, symbol: &str) -> Ptr<'a> {
+    pub fn put_symbol(&self, symbol: &str) -> Ptr {
         let s = Symbol {
             symbol: self
                 .symbols
@@ -131,7 +131,7 @@ impl Storage {
     }
 
     /// Retrieve a symbol to the symbol table.
-    pub fn get_symbol<'a>(&'a self, idx: Symbol) -> Ref<'a, str> {
+    pub fn get_symbol(&self, idx: Symbol) -> Ref<'_, str> {
         let symtab = self.symbols.borrow();
         Ref::map(symtab, |v| {
             v.resolve(idx.symbol).expect("retrieved nonexistent symbol")
@@ -172,7 +172,7 @@ impl Storage {
 
     /// Get the current GC root.
     /// Only one root may exist; the caller creates / destroys its own structure for this.
-    pub fn root<'a>(&'a self) -> Ptr<'a> {
+    pub fn root(&self) -> Ptr {
         self.bind(*self.root.borrow())
     }
 

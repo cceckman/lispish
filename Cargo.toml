@@ -6,20 +6,19 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-axum = { version = "0.7.5", optional = true }
+axum = { version = "0.7.5", optional = true , features = ["macros"]}
 dot-writer = { version = "0.1.3", optional = true }
-maud = { version = "0.26.0", optional = true }
+maud = { version = "0.26.0", optional = true, features = ["axum"] }
+rand = { version = "0.8.5", optional = true }
 regex = "1.10.4"
 string-interner = "0.15.0"
-tokio = { version = "1.37.0", optional = true }
+tokio = { version = "1.37.0", optional = true, features = ["rt-multi-thread"] }
 tracing = "0.1.40"
 
 [features]
 render = ["dep:maud", "dep:dot-writer"]
-web = ["render"]
-default = []
-tokio = ["dep:tokio"]
-axum = ["dep:axum"]
+web = ["render", "dep:tokio", "dep:axum", "dep:rand"]
+default = ["all"]
 all = ["render", "web"]
 
 [[bin]]
@@ -28,4 +27,4 @@ required-features = ["render"]
 
 [[bin]]
 name = "web"
-required-features = ["render", "web"]
+required-features = ["web"]
