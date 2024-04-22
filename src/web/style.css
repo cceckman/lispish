@@ -8,3 +8,8 @@ div.history {
 	display: flex;
 	flex-direction: column;
 }
+
+div.historyline {
+	display: flex;
+	flex-direction: row;
+}

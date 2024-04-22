@@ -2,11 +2,19 @@
 
 use std::io::ErrorKind;
 
-pub use parse::parse;
-pub use token::tokenize;
+use crate::data::{Ptr, Storage};
+use parse::parse;
+use token::tokenize;
 
 mod parse;
 mod token;
+
+/// Parse the string as a list of Lisp expressions (i.e. a body).
+pub fn parse_body<'a>(store: &'a Storage, input: &[u8]) -> ReadResult<Ptr<'a>> {
+    let tokens = tokenize(input)?;
+    let body = parse(store, tokens.into_iter())?;
+    Ok(body)
+}
 
 /// Error type if a read does not complete.
 ///
@@ -23,6 +31,15 @@ mod token;
 pub enum ReadErr {
     Error(String),
     Incomplete(String),
+}
+
+impl std::fmt::Display for ReadErr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
+        match self {
+            ReadErr::Error(e) => write!(f, "error in input: {e}"),
+            ReadErr::Incomplete(e) => write!(f, "incomplete input: {e}"),
+        }
+    }
 }
 
 impl ReadErr {

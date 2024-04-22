@@ -194,6 +194,20 @@ impl Storage {
         };
         (*self.generation.get_mut(), [*self.root.get_mut()]) = gc(last_gen, [old_root]);
     }
+
+    /// Get a displayable representation of the item.
+    pub fn display(&self, p: Ptr) -> String {
+        let it = self.get(p);
+        match it {
+            Object::Nil => "nil".to_owned(),
+            Object::Integer(i) => format!("{}", i),
+            Object::Float(i) => format!("{}", i),
+            Object::String(j) => format!("\"{}\"", &String::from_utf8_lossy(&self.get_string(&j))),
+            Object::Symbol(j) => format!("{}", self.get_symbol(j)),
+            Object::Pair(Pair { car, cdr }) => format!("({car}, {cdr})"),
+            Object::Builtin(f) => format!("fn {f:p}"),
+        }
+    }
 }
 
 /// Internal GC routine.
