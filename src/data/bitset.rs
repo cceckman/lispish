@@ -15,18 +15,6 @@ impl BitSet {
 
     const BITS_PER_WORD: usize = std::mem::size_of::<usize>() * 8;
 
-    /// Find the first zero is the key operation for a bitset-based allocator.
-    pub fn find_first_zero(&self) -> usize {
-        for (idx, word) in self.data.iter().enumerate() {
-            let z: usize = word.trailing_ones() as usize;
-            if z < Self::BITS_PER_WORD {
-                // There's a zero in this bitmask; get it.
-                return (idx * Self::BITS_PER_WORD) + z;
-            }
-        }
-        return self.data.len() * Self::BITS_PER_WORD;
-    }
-
     /// Gets the value of the given bit
     pub fn get(&self, idx: usize) -> bool {
         let word = idx / Self::BITS_PER_WORD;
