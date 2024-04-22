@@ -12,8 +12,9 @@ pub mod reader;
 pub mod data;
 
 mod eval;
+#[cfg(feature="render")]
 mod render;
-
+#[cfg(feature="render")]
 pub use render::render_store;
 
 /// Parse the string as a list of Lisp expressions (i.e. a body).

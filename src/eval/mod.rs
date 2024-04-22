@@ -42,28 +42,25 @@ enum Op {
     EvalBody,
 }
 
-pub(crate) struct EvalEnvironment<'a> {
-    store: &'a mut Storage,
+pub struct EvalEnvironment<'a> {
     op_stack: Vec<Op>,
 
-    stdin: &'a mut dyn BufRead,
-    stdout: &'a mut dyn Write,
     stderr: &'a mut dyn Write,
 }
 
 /// Evaluate
 pub fn eval(
-    store: &mut Storage,
-    stdin: &mut dyn BufRead,
-    stdout: &mut dyn Write,
+    _store: &mut Storage,
+    _stdin: &mut dyn BufRead,
+    _stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> Result<(), Error> {
     let mut env = EvalEnvironment {
-        store,
+        // store,
         op_stack: Vec::new(),
 
-        stdin,
-        stdout,
+        // stdin,
+        // stdout,
         stderr,
     };
     env.op_stack.push(Op::EvalBody);
@@ -87,7 +84,7 @@ impl EvalEnvironment<'_> {
     }
 }
 
-pub(crate) type Builtin = fn(&mut EvalEnvironment) -> Result<(), Error>;
+pub type Builtin = fn(&mut EvalEnvironment) -> Result<(), Error>;
 
 fn builtin_add(_eval: &mut EvalEnvironment) -> Result<(), Error> {
     Err("builtin_add is unimplemented".to_string())

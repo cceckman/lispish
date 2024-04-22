@@ -1,4 +1,4 @@
-use std::{marker::PhantomData, ops::Range, path::Display};
+use std::{marker::PhantomData, ops::Range};
 
 use crate::eval::Builtin;
 
