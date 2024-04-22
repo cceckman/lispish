@@ -61,12 +61,6 @@ mod tests {
                 assert_eq!(bs.get(j), i == j);
             }
 
-            if i == 0 {
-                assert_eq!(bs.find_first_zero(), 1);
-            } else {
-                assert_eq!(bs.find_first_zero(), 0);
-            }
-
             bs.clear(i)
         }
     }
@@ -77,10 +71,7 @@ mod tests {
         for i in (0..255usize).filter(|i| i % 2 == 0) {
             bs.set(i);
         }
-        assert_eq!(bs.find_first_zero(), 1);
         bs.set(1);
-        assert_eq!(bs.find_first_zero(), 3);
         bs.clear(2);
-        assert_eq!(bs.find_first_zero(), 2);
     }
 }

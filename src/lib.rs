@@ -12,19 +12,20 @@ pub mod reader;
 pub mod data;
 
 mod eval;
-#[cfg(feature="render")]
+#[cfg(feature = "render")]
 mod render;
-#[cfg(feature="render")]
+#[cfg(feature = "render")]
 pub use render::render_store;
+
+#[cfg(feature = "web")]
+pub mod web;
 
 /// Parse the string as a list of Lisp expressions (i.e. a body).
 pub fn parse_body<'a>(store: &'a Storage, input: &[u8]) -> ReadResult<Ptr<'a>> {
-        let tokens = reader::tokenize(input)?;
-        let body = reader::parse(store, tokens.into_iter())?;
-        Ok(body)
+    let tokens = reader::tokenize(input)?;
+    let body = reader::parse(store, tokens.into_iter())?;
+    Ok(body)
 }
-
-
 
 /// Runs a read-evaluate-print loop,
 /// and returns an exit code on success.
@@ -48,7 +49,7 @@ pub fn repl(
 
         // Offer a prompt:
         if input_buffer.is_empty() {
-            stderr.write("=> ".as_bytes())?;
+            stderr.write_all("=> ".as_bytes())?;
             stderr.flush()?;
         }
 
@@ -60,13 +61,10 @@ pub fn repl(
         // - an iterator over tokens
         // - an iterator over expressions
         // But we're not there yet.
-        match program_input.read_line(&mut input_buffer)? {
-            0 => {
-                stderr.write("End of input.\nNolite te Bastardes Carborundorum.\n".as_bytes())?;
-                stderr.flush()?;
-                return Ok(0);
-            }
-            _ => (),
+        if program_input.read_line(&mut input_buffer)? == 0 {
+            stderr.write_all("End of input.\nNolite te Bastardes Carborundorum.\n".as_bytes())?;
+            stderr.flush()?;
+            return Ok(0);
         }
 
         let tokens = match reader::tokenize(input_buffer.as_bytes()) {

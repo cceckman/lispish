@@ -17,7 +17,7 @@ const BUILTINS: &[(&str, Builtin)] = &[("+", builtin_add)];
 
 /// Declare the base environment (builtins and their symbols)
 /// and return the environment stack.
-pub fn create_env_stack<'a>(store: &'a Storage) -> Ptr<'a> {
+pub fn create_env_stack(store: &Storage) -> Ptr {
     // An environment is a list of bindings.
     let mut base_environment = Ptr::nil();
 
