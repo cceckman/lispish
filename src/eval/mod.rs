@@ -61,6 +61,12 @@ pub struct EvalEnvironment {
     store: Storage,
 }
 
+impl Default for EvalEnvironment {
+    fn default() -> EvalEnvironment {
+        EvalEnvironment::new()
+    }
+}
+
 impl EvalEnvironment {
     /// Initialize an empty Storage for evaluation:
     /// Load builtins, the standard environment, and the top-level environment.
@@ -114,6 +120,11 @@ impl EvalEnvironment {
             }
         }
 
+        #[cfg(feature = "render")]
+        {
+            self.store().add_label(self.store().root(), "TOP ENV");
+        }
+
         let body = match reader::parse_body(&self.store, body.as_bytes()) {
             Ok(ptr) => ptr,
             Err(e) => {
@@ -121,6 +132,11 @@ impl EvalEnvironment {
                 return Err(Error::UserError(format!("{e}")));
             }
         };
+
+        #[cfg(feature = "render")]
+        {
+            self.store().add_label(body, "BODY");
+        }
 
         // When idle, the top-level environment is the only thing on the stack.
         let top_env = match peek(&self.store) {
@@ -136,10 +152,15 @@ impl EvalEnvironment {
         push(&self.store, top_env);
         push(&self.store, body);
 
+        #[cfg(feature = "render")]
+        {
+            self.store().add_label(self.store.root(), "STACK");
+        }
+
         // We'll execute by evalling the body.
         self.op_stack.push(Op::EvalBody);
 
-        self.store.gc();
+        // self.store.gc();
         Ok(())
     }
 
@@ -190,7 +211,7 @@ impl EvalEnvironment {
                     // We'll need to continue evaluating the body,
                     // in this same environment.
                     push(&self.store, env);
-                    push(&self.store, body);
+                    push(&self.store, next);
                     self.op_stack.push(Op::EvalBody);
                     // ...but the evaluated value of this expression will be on the stack
                     // on top of them.
