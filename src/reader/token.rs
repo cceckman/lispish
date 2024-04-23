@@ -302,6 +302,30 @@ mod tests {
     }
 
     #[test]
+    fn comments() -> Result<(), ReadErr> {
+        let input = br#"
+            hello ; world
+            ; how are you?
+            i am ; fine
+        "#;
+
+        let output: Vec<Token> = tokenize(input)?.into_iter().map(|v| v.token).collect();
+
+        let want = &[
+            Token::Symbol("hello".to_owned()),
+            Token::Symbol("i".to_owned()),
+            Token::Symbol("am".to_owned()),
+        ];
+
+        assert_eq!(output.len(), want.len());
+
+        for ((i, got), want) in output.iter().enumerate().zip(want.iter()) {
+            assert_eq!(got, want, "unexpected token in case {}", i);
+        }
+        Ok(())
+    }
+
+    #[test]
     fn tokenize_atoms() -> Result<(), ReadErr> {
         let input = br#"hello "hi" world 24601 -6 -3.33 3.22"#;
         let output: Vec<Token> = tokenize(input)?.into_iter().map(|v| v.token).collect();

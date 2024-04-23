@@ -44,7 +44,7 @@ impl<T> From<Error> for Result<T, Error> {
     }
 }
 
-const BUILTINS: &[(&str, Builtin)] = &[("+", builtin_add)];
+const BUILTINS: &[(&str, Builtin)] = &[("+", builtin_unimplemented)];
 
 enum Op {
     // Precondition: stack is (body, environment)
@@ -173,7 +173,7 @@ impl EvalEnvironment {
     /// wind up taking a mutable borrow, preventing retrieval of results.
     pub fn result(&self) -> Result<Object, Error> {
         if self.op_stack.is_empty() {
-            Ok(self.store().get(peek(&self.store())?))
+            Ok(self.store().get(peek(self.store())?))
         } else {
             Err(Error::Fault("retrieved result when not ready".to_string()))
         }
@@ -181,7 +181,7 @@ impl EvalEnvironment {
 
     /// Evaluate until evaluation is complete, or an error is encountered.
     pub fn eval(&mut self) -> Result<(), Error> {
-        while let Poll::Pending = self.step()? {}
+        while self.step()?.is_pending() {}
         Ok(())
     }
 
@@ -229,7 +229,7 @@ impl EvalEnvironment {
             Op::EvalExpr => {
                 // Pop twice: expression, then environment.
                 let expr = pop(&self.store)?;
-                let _env = pop(&self.store)?;
+                let env = pop(&self.store)?;
 
                 match self.store.get(expr) {
                     Object::Nil | Object::Integer(_) | Object::Float(_) | Object::String(_) => {
@@ -237,12 +237,20 @@ impl EvalEnvironment {
                         push(&self.store, expr);
                     }
                     Object::Symbol(_) => {
-                        todo!()
+                        // Walk the environment tree to find the location.
+                        let loc = get_location(&self.store, expr, env)?;
+                        // In this case, what we want is the stored value.
+                        let pair = get_pair(&self.store, loc)?;
+                        push(&self.store, pair.cdr);
                     }
-                    Object::Builtin(_) => {
-                        todo!()
+                    Object::Builtin(f) => {
+                        // Builtins expect the current env at the top of the stack...
+                        // that's all we can do to have it.
+                        push(&self.store, env);
+                        f(self)?;
                     }
                     Object::Pair(_) => {
+                        // Apply a form.
                         todo!()
                     }
                 }
@@ -259,6 +267,42 @@ fn get_pair<'a>(store: &'a Storage, p: Ptr<'a>) -> Result<Pair<'a>, Error> {
     } else {
         Error::Fault(format!("object {p} is not a pair")).into()
     }
+}
+
+/// Get the location for a symbol.
+/// The result is a pointer to the binding (symbol, value pair).
+fn get_location<'a>(
+    store: &'a Storage,
+    symbol: Ptr<'a>,
+    mut environment: Ptr<'a>,
+) -> Result<Ptr<'a>, Error> {
+    // Environment is a stack of frames, which is a stack of bindings.
+    while !environment.is_nil() {
+        let mut frame: Ptr<'a>;
+        Pair {
+            car: frame,
+            cdr: environment,
+        } = get_pair(store, environment)?;
+
+        while !frame.is_nil() {
+            let binding: Ptr<'a>;
+            Pair {
+                car: binding,
+                cdr: frame,
+            } = get_pair(store, frame)?;
+            let Pair {
+                car: got_symbol, ..
+            } = get_pair(store, binding)?;
+            if got_symbol == symbol {
+                return Ok(binding);
+            }
+        }
+    }
+
+    Err(Error::UserError(format!(
+        "could not resolve symbol: {}",
+        store.get_symbol_ptr(symbol)
+    )))
 }
 
 fn push(store: &Storage, p: Ptr) {
@@ -292,10 +336,12 @@ fn peek(store: &Storage) -> Result<Ptr, Error> {
     }
 }
 
+/// A Builtin
+/// Precondition:
 pub type Builtin = fn(&mut EvalEnvironment) -> Result<(), Error>;
 
-fn builtin_add(_eval: &mut EvalEnvironment) -> Result<(), Error> {
-    Error::Fault("haven't implemented add".to_string()).into()
+fn builtin_unimplemented(_eval: &mut EvalEnvironment) -> Result<(), Error> {
+    Error::Fault("unimplemented builtin".to_string()).into()
 }
 
 #[cfg(test)]
@@ -327,6 +373,18 @@ mod tests {
                 f64::abs(-3.143f64 - v) < 0.000001,
                 "unexpected float value: {v}"
             ),
+            v => panic!("unexpected result: {v:?}"),
+        };
+    }
+
+    #[test]
+    fn string_eval() {
+        let mut eval = EvalEnvironment::new();
+        eval.start(r#"1 "hello" "world""#).unwrap();
+        eval.eval().unwrap();
+
+        match eval.result().unwrap() {
+            Object::String(x) => assert_eq!(eval.store().get_string(&x).as_ref(), b"world"),
             v => panic!("unexpected result: {v:?}"),
         };
     }
