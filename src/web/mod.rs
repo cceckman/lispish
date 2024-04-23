@@ -8,8 +8,6 @@ use axum::response::{IntoResponse, Result};
 use axum::routing::{get, post};
 use axum::Form;
 use std::collections::HashMap;
-use std::io::Write;
-use std::process::Stdio;
 use std::sync::Arc;
 use std::task::Poll;
 use tokio::sync::Mutex;
@@ -82,35 +80,7 @@ impl Session {
 
     fn render(&self) -> Result<impl IntoResponse, (StatusCode, String)> {
         let tbcontent = &self.expression;
-        let gv = self.state.store().render_gv();
-        // TODO: Work out how to make this async.
-        let rendered = move || -> Result<String, String> {
-            let mut dotgraph = std::process::Command::new("dot")
-                .arg("-Tsvg")
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-                .map_err(|e| format!("failed to launch storage render: {e}"))?;
-            dotgraph
-                .stdin
-                .take()
-                .unwrap()
-                .write_all(&gv)
-                .map_err(|e| format!("failed to provide graphviz input: {e}"))?;
-            let dotgraph = dotgraph
-                .wait_with_output()
-                .map_err(|e| format!("failed to complete dot command: {e}"))?;
-            if dotgraph.status.success() {
-                Ok(String::from_utf8_lossy(&dotgraph.stdout).to_string())
-            } else {
-                Err(format!(
-                    "failed to render stack graph: dot failed: {}",
-                    &String::from_utf8_lossy(&dotgraph.stderr)
-                ))
-            }
-        }()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+        let state = self.state.render_html().map_err(to_http_error)?;
 
         Ok(maud::html!(
                     DOCTYPE
@@ -144,7 +114,7 @@ impl Session {
                                                 formaction=(format!("/sessions/{}/step", &self.name));
                                     }
                                 }}
-                                div id="store" { (maud::PreEscaped(rendered)) }
+                                div { (state) }
                             }
                         }
                     }
