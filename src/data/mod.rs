@@ -30,6 +30,8 @@ use std::{cmp::max, collections::VecDeque, ops::Range};
 mod objects;
 pub use objects::*;
 use std::collections::HashMap;
+use string_interner::DefaultSymbol;
+use string_interner::Symbol as _;
 
 use crate::eval::Builtin;
 
@@ -164,16 +166,11 @@ impl Storage {
 
     /// Add a symbol to the symbol table.
     pub fn put_symbol(&self, symbol: &str) -> Ptr {
-        let s = Symbol {
-            symbol: self
-                .symbols
-                .borrow_mut()
-                .get_or_intern(symbol.to_uppercase()),
-        };
-
-        let mut gen = self.generation.borrow_mut();
-        let raw = gen.put_object(Object::Symbol(s));
-        self.bind(raw)
+        let s = self
+            .symbols
+            .borrow_mut()
+            .get_or_intern(symbol.to_uppercase());
+        self.bind(StoredPtr::new(s.to_usize(), StoredPtr::TAG_SYMBOL))
     }
 
     /// Retrieve a symbol to the symbol table.
@@ -181,6 +178,15 @@ impl Storage {
         let symtab = self.symbols.borrow();
         Ref::map(symtab, |v| {
             v.resolve(idx.symbol).expect("retrieved nonexistent symbol")
+        })
+    }
+
+    /// Retrieve a symbol to the symbol table.
+    pub fn get_symbol_ptr(&self, ptr: Ptr) -> Ref<'_, str> {
+        let symbol = DefaultSymbol::try_from_usize(ptr.idx() as usize).unwrap();
+        let symtab = self.symbols.borrow();
+        Ref::map(symtab, |v| {
+            v.resolve(symbol).expect("retrieved nonexistent symbol")
         })
     }
 
@@ -209,11 +215,15 @@ impl Storage {
 
     pub fn get<'a>(&'a self, ptr: Ptr<'a>) -> Object<'a> {
         if ptr.is_nil() {
-            return Object::Nil;
+            Object::Nil
+        } else if ptr.is_symbol() {
+            Object::Symbol(Symbol {
+                symbol: DefaultSymbol::try_from_usize(ptr.idx() as usize).unwrap(),
+            })
+        } else {
+            let stored = self.generation.borrow().get(ptr.raw);
+            Object::new(ptr, stored)
         }
-
-        let stored = self.generation.borrow().get(ptr.raw);
-        Object::new(ptr, stored)
     }
 
     /// Get the current GC root.
