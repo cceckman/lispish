@@ -15,6 +15,9 @@ use core::task::Poll;
 use std::fmt::Display;
 mod builtins;
 
+#[cfg(feature = "web")]
+mod render_eval;
+
 /// Result from a single-step:
 /// - An error
 /// - Execution is not complete
@@ -56,6 +59,26 @@ enum Op {
     // After evaluating the first argument, deal with rest of the form based on the result.
     // Precondition: stack is (eval item, tail of expression, environment).
     EvalForm,
+
+    // Add a variable to the provided environment.
+    // Precondition: stack is (value, symbol, environment).
+    Bind,
+}
+
+impl Display for Op {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Op::EvalBody => "EvalBody",
+                Op::EvalExpr => "EvalExpr",
+                Op::Discard => "Discard",
+                Op::EvalForm => "EvalForm",
+                Op::Bind => "Bind",
+            }
+        )
+    }
 }
 
 /// Environment for an in-progress evaluation.
@@ -243,9 +266,11 @@ impl EvalEnvironment {
                         push(&self.store, pair.cdr);
                     }
                     Object::Pair(Pair { car, cdr }) => {
-                        // We'll want to apply the form to the arguments, so prepare that op:
+                        // Prepare "apply the form":
                         push(&self.store, env);
                         push(&self.store, cdr);
+                        // But first, we need to work out what the first argument is-
+                        // function or builtin, hopefully.
                         self.op_stack.push(Op::EvalForm);
                         // But we need to evaluate the first item first.
                         push(&self.store, env);
@@ -268,10 +293,36 @@ impl EvalEnvironment {
                     // TODO: Apply function
                     _ => {
                         return Err(Error::UserError(format!(
-                            "object {applicator} is not a function or builtin"
+                            "object {applicator} is not applicable"
                         )))
                     }
                 }
+            }
+            Op::Bind => {
+                let value = pop(&self.store)?;
+                let symbol = pop(&self.store)?;
+                let environment = pop(&self.store)?;
+                assert!(symbol.is_symbol());
+                assert!(environment.is_pair());
+
+                // TODO: Consider generating an error for re-definition,
+                // instead of this (inefficient) overwriting.
+
+                // Environment is a stack of frames, which is a stack of bindings.
+                let frame: Ptr;
+                let next_frame: Ptr;
+                Pair {
+                    car: frame,
+                    cdr: next_frame,
+                } = get_pair(&self.store, environment)?;
+                let binding = self.store.put(Pair::cons(symbol, value));
+                let new_frame = self.store.put(Pair::cons(binding, frame));
+                // Update the frame in-place within the environment.
+                self.store
+                    .update(environment, Pair::cons(new_frame, next_frame));
+                // TODO: We're treating define as an expression; that means it has to return a
+                // value, even if it gets Discarded by a body.
+                push(&self.store, symbol);
             }
         }
         Ok(Poll::Pending)
@@ -435,6 +486,26 @@ mod tests {
 
         match eval.result().unwrap() {
             Object::Integer(1) => (),
+            v => panic!("unexpected result: {v:?}"),
+        };
+    }
+
+    #[test]
+    fn define_int_value_and_retrieve() {
+        // TODO: This is a hack for testing.
+        let mut eval = EvalEnvironment::new();
+        eval.start(
+            r#"
+        (define a 7)
+        (define b a)
+        b
+        "#,
+        )
+        .unwrap();
+        eval.eval().unwrap();
+
+        match eval.result().unwrap() {
+            Object::Integer(7) => (),
             v => panic!("unexpected result: {v:?}"),
         };
     }

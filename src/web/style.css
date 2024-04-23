@@ -13,3 +13,13 @@ div.historyline {
 	display: flex;
 	flex-direction: row;
 }
+
+div.eval{
+	display: flex;
+	flex-direction: row;
+}
+
+div.stack {
+	min-width: 10em;
+	font-family: monospace;
+}
