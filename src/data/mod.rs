@@ -196,8 +196,7 @@ impl Storage {
     }
 
     /// Get a displayable representation of the item.
-    pub fn display(&self, p: Ptr) -> String {
-        let it = self.get(p);
+    pub fn display(&self, it: Object) -> String {
         match it {
             Object::Nil => "nil".to_owned(),
             Object::Integer(i) => format!("{}", i),

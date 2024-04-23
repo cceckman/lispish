@@ -1,7 +1,6 @@
 //! Web server for interactive exploration
 
-use crate::data::Storage;
-use crate::eval::{self, initialize, Error, EvalEnvironment};
+use crate::eval::{self, Error, EvalEnvironment};
 use crate::render_store;
 use axum::extract::Path;
 use axum::http::header::LOCATION;
@@ -14,7 +13,6 @@ use std::io::Write;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::task::Poll;
-use std::time::Instant;
 use tokio::sync::Mutex;
 
 const STYLE: &[u8] = include_bytes!("style.css");
@@ -22,23 +20,13 @@ const STYLE: &[u8] = include_bytes!("style.css");
 struct Session {
     name: String,
 
-    /// Last active time of this session.
-    /// Sessions are eventually discarded.
-    last_active: Instant,
-
     history: Vec<(String, String)>,
 
-    output: String,
+    expression: Option<String>,
 
-    /// State of the session.
-    state: State,
-}
-
-enum State {
-    /// Not currently evaluating an expression.
-    /// The storage pointer reflects the top-level environment.
-    Idle(Storage),
-    Eval(EvalEnvironment),
+    /// Persistent environment for the session.
+    /// Always contains the last result.
+    state: EvalEnvironment,
 }
 
 fn to_http_error(err: eval::Error) -> (StatusCode, String) {
@@ -53,83 +41,49 @@ fn to_http_error(err: eval::Error) -> (StatusCode, String) {
 
 impl Session {
     fn new(name: String) -> Self {
-        let store = Storage::default();
-        initialize(&store);
         Session {
             name,
             history: Vec::new(),
-            last_active: Instant::now(),
-            state: State::Idle(store),
-            output: String::new(),
+            state: EvalEnvironment::new(),
+            expression: None,
         }
     }
 
-    /// Transition to "evaluating" state if not already there.
-    fn start_eval(&mut self, expression: &str) -> Result<(), eval::Error> {
-        let store = if let State::Idle(store) = &mut self.state {
-            std::mem::take(store)
-        } else {
-            return Ok(());
-        };
-        self.history.push((expression.to_owned(), "??".to_owned()));
-        match EvalEnvironment::start(store, expression) {
-            Err((store, error)) => {
-                self.state = State::Idle(store);
-                Err(error)
-            }
-            Ok(eval) => {
-                self.state = State::Eval(eval);
-                Ok(())
-            }
-        }
-    }
-
-    fn eval(&mut self, expression: &str) -> Result<(), (StatusCode, String)> {
-        if expression.is_empty() {
-            return Ok(());
-        }
-        self.start_eval(expression).map_err(to_http_error)?;
-
-        let printable_result = loop {
-            if let State::Eval(ref mut ctx) = self.state {
-                let result = ctx.step().map_err(to_http_error)?;
-                match result {
-                    Poll::Pending => continue,
-                    Poll::Ready(p) => break ctx.store().display(p),
+    fn step(&mut self, expression: &str) -> Result<(), eval::Error> {
+        if let Some(current) = self.expression.take() {
+            // We're evaluating an expression. Single-step.
+            match self.state.step() {
+                Err(e) => {
+                    self.history.push((current, format!("{e}")));
+                    Err(e)
                 }
-            } else {
-                // TODO: Fix this, we "know" we're in the right state at this point.
-                return Err(to_http_error(eval::Error::Fault(
-                    "state was not ready-for-eval".to_string(),
-                )));
+                Ok(Poll::Pending) => {
+                    self.expression = Some(current);
+                    Ok(())
+                }
+                Ok(Poll::Ready(_)) => {
+                    // Retrieve the value.
+                    let result = self.state.result()?;
+                    self.history
+                        .push((current, self.state.store().display(result)));
+                    Ok(())
+                }
             }
-        };
+        } else {
+            // Start a new expression.
+            self.state.start(expression)?;
+            // Only "commit" to this expression if it parsed OK.
+            self.expression = Some(expression.to_owned());
+            // Return after setup (parsing) - we want to give a chance to render before any
+            // execution takes place.
 
-        // We've gotten a result from evaluation.
-        // Update state.
-        let result: Result<(), eval::Error>;
-        (self.state, result) = match self.state {
-            State::Eval(ctx) => match ctx.idle() {
-                Ok(store) => (State::Idle(store), Ok(())),
-                Err((ctx, err)) => (State::Eval(ctx), Err(err)),
-            },
-            State::Idle(store) => (State::Idle(store), Ok(())),
-        };
-        result.map_err(to_http_error)?;
-        // TODO: Should always be true...
-        if let Some((expression, _)) = self.history.pop() {
-            self.history.push((expression, printable_result))
+            Ok(())
         }
-
-        Ok(())
     }
 
     fn render(&self) -> Result<impl IntoResponse, (StatusCode, String)> {
-        let (store, tbcontent) = match &self.state {
-            State::Idle(store) => (store, None),
-            State::Eval(env) => (env.store(), self.history.last()),
-        };
-        let gv = render_store(store, []);
+        let tbcontent = &self.expression;
+        let gv = render_store(self.state.store(), []);
         // TODO: Work out how to make this async.
         let rendered = move || -> Result<String, String> {
             let mut dotgraph = std::process::Command::new("dot")
@@ -176,15 +130,15 @@ impl Session {
                                     }
         }
                                     @if let Some(content) = tbcontent {
-                                        textarea class="history latest" disabled { (content.0) }
+                                        textarea class="history latest" disabled { (content) }
                                     } @else {
                                         textarea class="history latest" name="expression" {  }
                                     }
                                     div id="control" {
-                                        input   type="submit"
-                                                value="Evaluate"
-                                                method="post"
-                                                formaction=(format!("/sessions/{}/eval", &self.name));
+                                        // input   type="submit"
+                                        //         value="Evaluate"
+                                        //         method="post"
+                                        //         formaction=(format!("/sessions/{}/eval", &self.name));
                                         input   type="submit"
                                                 value="Step"
                                                 method="post"
@@ -224,7 +178,7 @@ impl SessionHandler {
         session.render()
     }
 
-    async fn eval(
+    async fn step(
         sessions: axum::extract::State<SessionHandler>,
         Path(session_name): Path<String>,
         Form(form): Form<HashMap<String, String>>,
@@ -232,9 +186,10 @@ impl SessionHandler {
         let session = sessions.0.session_ptr(&session_name).await;
         let mut session = session.lock().await;
 
-        if let Some(expression) = form.get("expression") {
-            session.eval(expression)?;
-        }
+        // TODO: Still render, even with an error-status code.
+        session
+            .step(form.get("expression").map(|s| s.as_str()).unwrap_or(""))
+            .map_err(to_http_error)?;
 
         Ok((
             StatusCode::SEE_OTHER,
@@ -257,6 +212,6 @@ pub fn get_server() -> axum::Router {
             get(|| async { ([(axum::http::header::CONTENT_TYPE, "text/css")], STYLE) }),
         )
         .route("/sessions/:session", get(SessionHandler::get))
-        .route("/sessions/:session/eval", post(SessionHandler::eval))
+        .route("/sessions/:session/step", post(SessionHandler::step))
         .with_state(sessions)
 }
