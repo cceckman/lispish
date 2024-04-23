@@ -1,7 +1,6 @@
 //! Web server for interactive exploration
 
 use crate::eval::{self, Error, EvalEnvironment};
-use crate::render_store;
 use axum::extract::Path;
 use axum::http::header::LOCATION;
 use axum::http::StatusCode;
@@ -83,7 +82,7 @@ impl Session {
 
     fn render(&self) -> Result<impl IntoResponse, (StatusCode, String)> {
         let tbcontent = &self.expression;
-        let gv = render_store(self.state.store(), []);
+        let gv = self.state.store().render_gv();
         // TODO: Work out how to make this async.
         let rendered = move || -> Result<String, String> {
             let mut dotgraph = std::process::Command::new("dot")

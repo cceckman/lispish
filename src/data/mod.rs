@@ -25,13 +25,18 @@
 mod bitset;
 
 use std::cell::{Ref, RefCell};
+use std::ops::DerefMut;
 use std::{cmp::max, collections::VecDeque, ops::Range};
 mod objects;
 pub use objects::*;
+use std::collections::HashMap;
 
 use crate::eval::Builtin;
 
 use self::bitset::BitSet;
+
+#[cfg(feature = "render")]
+mod render;
 
 /// Storage allows representing all persistent objects.
 #[derive(Default)]
@@ -45,13 +50,39 @@ pub struct Storage {
     root: RefCell<StoredPtr>,
 
     high_water: StorageStats,
+
+    /// Labelled nodes.
+    /// These provide useful debugging info, like "this is the root of the stack".
+    labels: RefCell<HashMap<String, StoredPtr>>,
 }
 
 /// Data that exists for a single "generation" (between GCs).
-#[derive(Default)]
 struct Generation {
     objects: Vec<StoredValue>,
     string_data: Vec<u8>,
+}
+
+impl Default for Generation {
+    fn default() -> Self {
+        Self {
+            // Always reserve the 0 index.
+            objects: vec![StoredValue { tombstone: 0 }],
+            string_data: Default::default(),
+        }
+    }
+}
+
+impl Generation {
+    fn with_capacity(len: usize) -> Self {
+        let mut objects = Vec::with_capacity(len);
+        // Reserve 0:
+        objects.push(StoredValue { tombstone: 0 });
+        Self {
+            // Always reserve the 0 index.
+            objects,
+            string_data: Default::default(),
+        }
+    }
 }
 
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
@@ -100,6 +131,20 @@ trait Bind<'a> {
 }
 
 impl Storage {
+    /// Render the current state of storage into a Graphviz document.
+    #[cfg(feature = "render")]
+    pub fn render_gv(&self) -> Vec<u8> {
+        use self::render::render_store;
+
+        let labels = self.labels.borrow();
+        render_store(self, labels.iter().map(|(k, v)| (*v, k.as_str())))
+    }
+
+    #[cfg(feature = "render")]
+    pub fn add_label(&self, p: Ptr, label: &str) {
+        self.labels.borrow_mut().insert(label.to_string(), p.raw);
+    }
+
     fn bind<'a, T: Bind<'a>>(&'a self, raw: T::Free) -> T {
         T::bind(self, raw)
     }
@@ -107,7 +152,8 @@ impl Storage {
     pub fn current_stats(&self) -> StorageStats {
         let gen = self.generation.borrow();
         StorageStats {
-            objects: gen.objects.len(),
+            // Discount one object, the reserved nil index.
+            objects: gen.objects.len() - 1,
             string_data: gen.string_data.len(),
             symbols: self.symbols.borrow().len(),
         }
@@ -183,16 +229,23 @@ impl Storage {
     /// Run a garbage-collection pass, based on the provided roots.
     pub fn gc(&mut self) {
         let current_stats = self.current_stats();
-        // Soft-destructure:
-        let last_gen = self.generation.take();
-        let old_root = self.root.take();
         self.high_water = StorageStats {
             // Update stats before compaction:
             objects: max(self.high_water.objects, current_stats.objects),
             string_data: max(self.high_water.string_data, current_stats.string_data),
             symbols: max(self.high_water.symbols, current_stats.symbols),
         };
-        (*self.generation.get_mut(), [*self.root.get_mut()]) = gc(last_gen, [old_root]);
+
+        // Soft-destructure:
+        let last_gen = self.generation.take();
+        let mut root = self.root.borrow_mut();
+        let mut labels = self.labels.borrow_mut();
+
+        let mut roots: Vec<_> = labels
+            .values_mut()
+            .chain(std::iter::once(root.deref_mut()))
+            .collect();
+        *self.generation.get_mut() = gc(last_gen, &mut roots);
     }
 
     /// Get a displayable representation of the item.
@@ -215,22 +268,18 @@ impl Storage {
 ///
 /// All pointers in the environment should be passed in via roots.
 /// Pointers can change across a GC pass; the GC routine will fix up those in storage and those in `roots`.
-fn gc<const NROOTS: usize>(
-    mut last_gen: Generation,
-    old_roots: [StoredPtr; NROOTS],
-) -> (Generation, [StoredPtr; NROOTS]) {
+fn gc(mut last_gen: Generation, old_roots: &mut [&mut StoredPtr]) -> Generation {
     // TODO: Add trace output for debug
 
     let mut live_objects = BitSet::new();
-    let mut queue: VecDeque<StoredPtr> =
-        old_roots.iter().cloned().filter(|v| !v.is_nil()).collect();
+    let mut queue: VecDeque<StoredPtr> = old_roots
+        .iter()
+        .filter_map(|v| if !v.is_nil() { Some(**v) } else { None })
+        .collect();
 
-    let mut next_gen = Generation {
-        // We'll never shrink below our number of live objects at _last_ GC.
-        // We could apply some hysteresis here, but... eh, TODO.
-        objects: Vec::with_capacity(last_gen.objects.len()),
-        string_data: Vec::with_capacity(0),
-    };
+    // We'll never shrink below our number of live objects at _last_ GC.
+    // We could apply some hysteresis here, but... eh, TODO.
+    let mut next_gen = Generation::with_capacity(last_gen.objects.len());
     let mut string_length = 0usize;
 
     // First pass:
@@ -239,6 +288,9 @@ fn gc<const NROOTS: usize>(
     // TODO: Consider a stack rather than a queue. Measure: do we run faster with one or the other?
     // (Hypothesis: stack will result in better data locality.)
     while let Some(old_ptr) = queue.pop_front() {
+        // Internal check: we shouldn't traverse to nil pointers.
+        assert!(!old_ptr.is_nil());
+
         let old_idx = old_ptr.idx();
         if live_objects.get(old_idx) {
             continue;
@@ -267,38 +319,44 @@ fn gc<const NROOTS: usize>(
     // -    We need to update the roots to have the new indices. Fairly simple.
     // -    We need to update all the heap pointers to reflect their
     //      new indices - a second walk.
-    queue.clear();
     // -    And we need to copy the string contents.
     // First case is easy, let's do it right quick,
     // while also forming the "new old pointers" list we'll need to update later.
-    let new_roots = old_roots.map(|old_ptr: StoredPtr| -> StoredPtr {
-        if old_ptr.is_nil() {
-            return old_ptr;
+    for old_root in old_roots.iter_mut() {
+        if old_root.is_nil() {
+            continue;
         }
-        queue.push_back(old_ptr);
+        queue.push_back(**old_root);
         // All "live" objects in the old arena now contain a tombstone entry,
         // their index in the new arena.
-        let new_idx = unsafe { last_gen.objects[old_ptr.idx()].tombstone };
-        StoredPtr::new(new_idx, old_ptr.tag())
-    });
+        let new_idx = unsafe { last_gen.objects[old_root.idx()].tombstone };
+        **old_root = StoredPtr::new(new_idx, old_root.tag())
+    }
 
     // Now we have a list of "old" pointers in the heap to go through.
     next_gen.string_data.reserve_exact(string_length);
     while let Some(old_ptr) = queue.pop_front() {
-        if live_objects.get(old_ptr.idx()) {
-            // We haven't visited this on the second pass yet.
-            live_objects.clear(old_ptr.idx());
-        } else {
+        // Internal check: we shouldn't traverse to nil pointers.
+        assert!(!old_ptr.is_nil());
+
+        if !live_objects.get(old_ptr.idx()) {
+            // We cleared the liveness on a previous pass.
             continue;
         }
+        // We haven't visited this on the second pass yet.
+        live_objects.clear(old_ptr.idx());
 
         if old_ptr.is_pair() {
-            // This is a pair; we need to update its inner pointers,
+            // This is a pair; we need to update its inner pointers, in the new arena.
             let new_idx = unsafe { last_gen.objects[old_ptr.idx()].tombstone };
             let pair = unsafe { &mut next_gen.objects[new_idx].pair };
             // This object still contains the old pointers, because we haven't visited this node on this pass.
-            // We need to recurse; we can put the old pointers in this queue.
+            // Put the old pointers in the queue, and update the new location.
             for rp in [&mut pair.car, &mut pair.cdr] {
+                if rp.is_nil() {
+                    // Nil is still nil.
+                    continue;
+                }
                 queue.push_back(*rp);
                 // And lookup + update the children - to the _new_ pointers:
                 let new_cr = unsafe { last_gen.objects[rp.idx()].tombstone };
@@ -316,7 +374,7 @@ fn gc<const NROOTS: usize>(
         }
     }
 
-    (next_gen, new_roots)
+    next_gen
 }
 
 #[derive(Clone, Copy)]

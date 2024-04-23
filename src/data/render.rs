@@ -5,6 +5,8 @@ use dot_writer::DotWriter;
 
 use crate::data::{Object, Pair, Ptr, Storage};
 
+use super::StoredPtr;
+
 fn node_for_ptr(p: Ptr) -> String {
     format!(r#"<{p}>"#)
 }
@@ -12,9 +14,9 @@ fn node_for_ptr(p: Ptr) -> String {
 /// Render the state of storage into Graphviz graph.
 pub fn render_store<'a>(
     store: &'a Storage,
-    labeled_nodes: impl IntoIterator<Item = (Ptr<'a>, &'a str)>,
+    labeled_nodes: impl IntoIterator<Item = (StoredPtr, &'a str)>,
 ) -> Vec<u8> {
-    let names: HashMap<Ptr<'a>, &'a str> = labeled_nodes.into_iter().collect();
+    let names: HashMap<_, &'a str> = labeled_nodes.into_iter().collect();
     let mut outbuf = Vec::new();
     {
         let mut writer = DotWriter::from(&mut outbuf);
@@ -30,8 +32,8 @@ pub fn render_store<'a>(
 
             let id = node_for_ptr(it);
             let mut node = graph.node_named(&id);
-            let name = if let Some(label) = names.get(&it) {
-                format!("{it}\r{label}")
+            let name = if let Some(label) = names.get(&it.raw) {
+                format!("{it}\n{label}")
             } else {
                 format!("{it}")
             };

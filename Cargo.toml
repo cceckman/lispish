@@ -22,9 +22,5 @@ default = ["all"]
 all = ["render", "web"]
 
 [[bin]]
-name = "render_expression"
-required-features = ["render"]
-
-[[bin]]
 name = "web"
 required-features = ["web"]
