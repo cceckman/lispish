@@ -13,6 +13,7 @@ use crate::{
 };
 use core::task::Poll;
 use std::fmt::Display;
+mod builtins;
 
 /// Result from a single-step:
 /// - An error
@@ -44,8 +45,6 @@ impl<T> From<Error> for Result<T, Error> {
     }
 }
 
-const BUILTINS: &[(&str, Builtin)] = &[("+", builtin_unimplemented)];
-
 enum Op {
     // Precondition: stack is (body, environment)
     EvalBody,
@@ -53,6 +52,10 @@ enum Op {
     EvalExpr,
     // Precondition: stack is (value to be discarded).
     Discard,
+
+    // After evaluating the first argument, deal with rest of the form based on the result.
+    // Precondition: stack is (eval item, tail of expression, environment).
+    EvalForm,
 }
 
 /// Environment for an in-progress evaluation.
@@ -77,7 +80,7 @@ impl EvalEnvironment {
         // Frames are mutable.
         let mut base_frame = Ptr::nil();
 
-        for (name, builtin) in BUILTINS {
+        for (name, builtin) in builtins::BUILTINS {
             let symbol = store.put_symbol(name);
             let builtin = store.put(*builtin);
 
@@ -232,10 +235,6 @@ impl EvalEnvironment {
                 let env = pop(&self.store)?;
 
                 match self.store.get(expr) {
-                    Object::Nil | Object::Integer(_) | Object::Float(_) | Object::String(_) => {
-                        // Literals evaluate to themselves.
-                        push(&self.store, expr);
-                    }
                     Object::Symbol(_) => {
                         // Walk the environment tree to find the location.
                         let loc = get_location(&self.store, expr, env)?;
@@ -243,15 +242,34 @@ impl EvalEnvironment {
                         let pair = get_pair(&self.store, loc)?;
                         push(&self.store, pair.cdr);
                     }
-                    Object::Builtin(f) => {
-                        // Builtins expect the current env at the top of the stack...
-                        // that's all we can do to have it.
+                    Object::Pair(Pair { car, cdr }) => {
+                        // We'll want to apply the form to the arguments, so prepare that op:
                         push(&self.store, env);
-                        f(self)?;
+                        push(&self.store, cdr);
+                        self.op_stack.push(Op::EvalForm);
+                        // But we need to evaluate the first item first.
+                        push(&self.store, env);
+                        push(&self.store, car);
+                        self.op_stack.push(Op::EvalExpr);
                     }
-                    Object::Pair(_) => {
-                        // Apply a form.
-                        todo!()
+                    // All other types evaluate to themselves.
+                    _ => {
+                        push(&self.store, expr);
+                    }
+                }
+            }
+            Op::EvalForm => {
+                // Stack is (applicator, tail of expr, environment).
+                let applicator = pop(&self.store)?;
+                // Stack is (args, environment).
+                // What do we need to do with them?
+                match self.store.get(applicator) {
+                    Object::Builtin(f) => f(self)?,
+                    // TODO: Apply function
+                    _ => {
+                        return Err(Error::UserError(format!(
+                            "object {applicator} is not a function or builtin"
+                        )))
                     }
                 }
             }
@@ -337,12 +355,8 @@ fn peek(store: &Storage) -> Result<Ptr, Error> {
 }
 
 /// A Builtin
-/// Precondition:
+/// Precondition on call: stack is (tail of expression, env).
 pub type Builtin = fn(&mut EvalEnvironment) -> Result<(), Error>;
-
-fn builtin_unimplemented(_eval: &mut EvalEnvironment) -> Result<(), Error> {
-    Error::Fault("unimplemented builtin".to_string()).into()
-}
 
 #[cfg(test)]
 mod tests {
@@ -385,6 +399,42 @@ mod tests {
 
         match eval.result().unwrap() {
             Object::String(x) => assert_eq!(eval.store().get_string(&x).as_ref(), b"world"),
+            v => panic!("unexpected result: {v:?}"),
+        };
+    }
+
+    #[test]
+    fn eval_nil() {
+        let mut eval = EvalEnvironment::new();
+        eval.start(r#"()"#).unwrap();
+        eval.eval().unwrap();
+
+        match eval.result().unwrap() {
+            Object::Nil => (),
+            v => panic!("unexpected result: {v:?}"),
+        };
+    }
+
+    #[test]
+    fn cannot_apply_number() {
+        let mut eval = EvalEnvironment::new();
+        eval.start(r#"(1)"#).unwrap();
+        let result = eval.eval();
+        match result {
+            Err(super::Error::UserError(_)) => (),
+            _ => panic!("unexpected result: {:?}", result),
+        }
+    }
+
+    #[test]
+    fn symbol_eval() {
+        // TODO: This is a hack for testing.
+        let mut eval = EvalEnvironment::new();
+        eval.start(r#"(one)"#).unwrap();
+        eval.eval().unwrap();
+
+        match eval.result().unwrap() {
+            Object::Integer(1) => (),
             v => panic!("unexpected result: {v:?}"),
         };
     }
