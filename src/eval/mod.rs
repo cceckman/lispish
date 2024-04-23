@@ -1,4 +1,4 @@
-//! Lisp evaluator.
+//!Lisp evaluator.
 //!
 //! This evaluator is based on bytecode. It has three stacks of state:
 //!
@@ -17,9 +17,11 @@ use std::fmt::Display;
 /// Result from a single-step:
 /// - An error
 /// - Execution is not complete
-/// - Execution is complete - and here's the result.
-pub type StepResult<'a> = Result<Poll<Ptr<'a>>, Error>;
+/// - Execution is complete. The result must be retrieved separately
+///     (to avoid capturing a mutable borrow of the storage).
+pub type StepResult = Result<Poll<()>, Error>;
 
+#[derive(Debug, Clone)]
 pub enum Error {
     /// An error in the evaluated program's semantics.
     UserError(String),
@@ -44,37 +46,13 @@ impl<T> From<Error> for Result<T, Error> {
 
 const BUILTINS: &[(&str, Builtin)] = &[("+", builtin_add)];
 
-/// Initialize an empty Storage for evaluation:
-/// Load builtins, the standard environment, and the top-level environment.
-/// Creates the initial operand stack.
-pub fn initialize(store: &Storage) {
-    // A frame is a list of bindings.
-    // Frames are mutable.
-    let mut base_frame = Ptr::nil();
-
-    for (name, builtin) in BUILTINS {
-        let symbol = store.put_symbol(name);
-        let builtin = store.put(*builtin);
-
-        // A binding is a symbol, value pair.
-        // Bindings are mutable.
-        let binding = store.put(Pair::cons(symbol, builtin));
-        base_frame = store.put(Pair::cons(binding, base_frame));
-    }
-
-    // An environment is a list of frames.
-    // TODO: I'm not sure this is accurate, or if there's another layer in there.
-    let base_env = store.put(Pair::cons(base_frame, Ptr::nil()));
-
-    // The initial operand stack consists (only) of the environment.
-    push(store, base_env);
-}
-
 enum Op {
     // Precondition: stack is (body, environment)
     EvalBody,
     // Preconditon: stack is (expression, environment)
     EvalExpr,
+    // Precondition: stack is (value to be discarded).
+    Discard,
 }
 
 /// Environment for an in-progress evaluation.
@@ -84,38 +62,70 @@ pub struct EvalEnvironment {
 }
 
 impl EvalEnvironment {
-    /// If evaluation is complete, return to the idle state.
-    pub fn idle(self) -> Result<Storage, (Self, Error)> {
-        if self.op_stack.is_empty() {
-            // Consume the top-of-stack, which is the result of the top-level 'body'
-            // evaluation.
-            match pop(&self.store) {
-                Ok(_) => (),
-                Err(e) => return Err((self, e)),
-            };
-            Ok(self.store)
-        } else {
-            Err((
-                self,
-                Error::Fault("returning to idle but execution is not complete".to_string()),
-            ))
+    /// Initialize an empty Storage for evaluation:
+    /// Load builtins, the standard environment, and the top-level environment.
+    /// Creates the initial operand stack.
+    pub fn new() -> EvalEnvironment {
+        let store = Storage::default();
+        // A frame is a list of bindings.
+        // Frames are mutable.
+        let mut base_frame = Ptr::nil();
+
+        for (name, builtin) in BUILTINS {
+            let symbol = store.put_symbol(name);
+            let builtin = store.put(*builtin);
+
+            // A binding is a symbol, value pair.
+            // Bindings are mutable.
+            let binding = store.put(Pair::cons(symbol, builtin));
+            base_frame = store.put(Pair::cons(binding, base_frame));
+        }
+
+        // An environment is a list of frames.
+        // TODO: I'm not sure this is accurate, or if there's another layer in there.
+        let base_env = store.put(Pair::cons(base_frame, Ptr::nil()));
+
+        // When idle, we only have the op-level environment stack.
+        push(&store, base_env);
+        EvalEnvironment {
+            op_stack: Vec::new(),
+            store,
         }
     }
 
-    /// Set up environment and start evaluation.
-    /// Returns an error (and storage) if the expression does not parse.
-    pub fn start(mut store: Storage, body: &str) -> Result<EvalEnvironment, (Storage, Error)> {
-        let body = match reader::parse_body(&store, body.as_bytes()) {
+    /// Start evaluating a new expression.
+    ///
+    /// This clears any state from any previous evaluations, effectivly cancelling them.
+    /// Returns an error if the expression does not parse.
+    pub fn start(&mut self, body: &str) -> Result<(), Error> {
+        // To clean up an evaluation,
+        // 1. Clear any operands:
+        self.op_stack.clear();
+        // 2. Walk back the top-level stack to the top-level env:
+        // TODO: Allow eval-env to be in a "poison" state, instead of expecting here
+        loop {
+            let p = pop(&self.store).expect("corrupted stack");
+            let Pair { cdr, .. } = get_pair(&self.store, p).expect("corrupted stack");
+            if cdr.is_nil() {
+                // Oops, we exhausted the stack. Push it back.
+                // p is still valid - we haven't gc'd.
+                push(&self.store, p);
+                break;
+            }
+        }
+
+        let body = match reader::parse_body(&self.store, body.as_bytes()) {
             Ok(ptr) => ptr,
             Err(e) => {
-                store.gc();
-                return Err((store, Error::UserError(format!("{e}"))));
+                self.store.gc();
+                return Err(Error::UserError(format!("{e}")));
             }
         };
+
         // When idle, the top-level environment is the only thing on the stack.
-        let top_env = match peek(&store) {
+        let top_env = match peek(&self.store) {
             Ok(env) => env,
-            Err(e) => return Err((store, e)),
+            Err(e) => return Err(e),
         };
 
         // Eval-expression calls consume their environment.
@@ -123,29 +133,49 @@ impl EvalEnvironment {
         // ensure that the stack reads (body top top) to start off with.
         // When we complete evaluation, we'll have (result top)-
         // and can do a final pop of (result).
-        push(&store, top_env);
-        push(&store, body);
-
-        let mut eval = EvalEnvironment {
-            store,
-            op_stack: Vec::new(),
-        };
+        push(&self.store, top_env);
+        push(&self.store, body);
 
         // We'll execute by evalling the body.
-        eval.op_stack.push(Op::EvalBody);
+        self.op_stack.push(Op::EvalBody);
 
-        eval.store.gc();
-        Ok(eval)
+        self.store.gc();
+        Ok(())
+    }
+
+    pub fn store(&self) -> &Storage {
+        &self.store
+    }
+
+    /// Retrieve the result of an evaluation, if complete.
+    /// This is required as a separate method because `eval` and `step`
+    /// wind up taking a mutable borrow, preventing retrieval of results.
+    pub fn result(&self) -> Result<Object, Error> {
+        if self.op_stack.is_empty() {
+            Ok(self.store().get(peek(&self.store())?))
+        } else {
+            Err(Error::Fault("retrieved result when not ready".to_string()))
+        }
+    }
+
+    /// Evaluate until evaluation is complete, or an error is encountered.
+    pub fn eval(&mut self) -> Result<(), Error> {
+        while let Poll::Pending = self.step()? {}
+        Ok(())
     }
 
     /// Step forward: perform a single eval operation.
     pub fn step(&mut self) -> StepResult {
         let op = match self.op_stack.pop() {
-            None => return Ok(Poll::Ready(peek(&self.store)?)),
+            None => return Ok(Poll::Ready(())),
             Some(op) => op,
         };
 
         match op {
+            Op::Discard => {
+                // Simple enough:
+                pop(&self.store)?;
+            }
             Op::EvalBody => {
                 // Pop twice: body, then environment.
                 let body = pop(&self.store)?;
@@ -162,6 +192,10 @@ impl EvalEnvironment {
                     push(&self.store, env);
                     push(&self.store, body);
                     self.op_stack.push(Op::EvalBody);
+                    // ...but the evaluated value of this expression will be on the stack
+                    // on top of them.
+                    // So we'll need to discard that value, then evaluate.
+                    self.op_stack.push(Op::Discard);
                 }
                 // Note this degenerates to "tail call":
                 // the result of a body expression is evaluation of the final expression.
@@ -194,10 +228,6 @@ impl EvalEnvironment {
             }
         }
         Ok(Poll::Pending)
-    }
-
-    pub fn store(&self) -> &Storage {
-        &self.store
     }
 }
 
@@ -245,4 +275,23 @@ pub type Builtin = fn(&mut EvalEnvironment) -> Result<(), Error>;
 
 fn builtin_add(_eval: &mut EvalEnvironment) -> Result<(), Error> {
     Error::Fault("haven't implemented add".to_string()).into()
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::data::Object;
+
+    use super::EvalEnvironment;
+
+    #[test]
+    fn int_eval() {
+        let mut eval = EvalEnvironment::new();
+        eval.start("1 2 3").unwrap();
+        eval.eval().unwrap();
+
+        match eval.result().unwrap() {
+            Object::Integer(3) => (),
+            v => panic!("unexpected result: {v:?}"),
+        };
+    }
 }
