@@ -315,4 +315,19 @@ mod tests {
             v => panic!("unexpected result: {v:?}"),
         };
     }
+
+    #[test]
+    fn float_eval() {
+        let mut eval = EvalEnvironment::new();
+        eval.start("3.5 -3.143").unwrap();
+        eval.eval().unwrap();
+
+        match eval.result().unwrap() {
+            Object::Float(v) => assert!(
+                f64::abs(-3.143f64 - v) < 0.000001,
+                "unexpected float value: {v}"
+            ),
+            v => panic!("unexpected result: {v:?}"),
+        };
+    }
 }
