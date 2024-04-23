@@ -122,6 +122,12 @@ impl Generation {
         assert!(idx < self.objects.len());
         self.objects[idx]
     }
+
+    fn update(&mut self, ptr: StoredPtr, pair: StoredPair) {
+        let idx = ptr.idx();
+        assert!(idx < self.objects.len());
+        self.objects[idx].pair = pair;
+    }
 }
 
 /// Bind is a trait for binding stored types to the storage that holds them:
@@ -188,6 +194,14 @@ impl Storage {
         Ref::map(symtab, |v| {
             v.resolve(symbol).expect("retrieved nonexistent symbol")
         })
+    }
+
+    /// Replace the given pair with a new one.
+    /// This is the only form of update permitted,
+    /// since it is sufficient to rebind variables.
+    pub fn update(&self, ptr: Ptr, object: Pair) {
+        assert!(ptr.is_pair());
+        self.generation.borrow_mut().update(ptr.raw, object.into());
     }
 
     /// Add a string to the string content.
@@ -504,6 +518,15 @@ impl std::fmt::Debug for StoredPtr {
 struct StoredPair {
     car: StoredPtr,
     cdr: StoredPtr,
+}
+
+impl From<Pair<'_>> for StoredPair {
+    fn from(pair: Pair) -> Self {
+        StoredPair {
+            car: pair.car.raw,
+            cdr: pair.cdr.raw,
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
