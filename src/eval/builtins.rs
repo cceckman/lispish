@@ -12,6 +12,7 @@ pub const MASKED_BUILTINS: &[(&str, Builtin)] = &[("builtin:add", builtin_unimpl
 /// Don't do that, though, please.
 pub const BUILTINS: &[(&str, Builtin)] = &[
     ("define", builtin_define),
+    ("begin", builtin_begin),
     ("lambda", builtin_unimplemented),
     ("if", builtin_unimplemented),
     ("cond", builtin_unimplemented),
@@ -34,8 +35,8 @@ fn builtin_one(eval: &mut EvalEnvironment) -> Result<(), Error> {
 }
 
 fn builtin_define(eval: &mut EvalEnvironment) -> Result<(), Error> {
-    let args = pop(eval.store())?; // 35
-    let env = pop(eval.store())?; // 34
+    let args = pop(eval.store())?;
+    let env = pop(eval.store())?;
 
     // Are we defining a function or a variable?
     let binding: Ptr<'_>;
@@ -90,4 +91,17 @@ fn builtin_define(eval: &mut EvalEnvironment) -> Result<(), Error> {
         "cannot bind to non-symbol/non-function expression {}",
         binding
     )))
+}
+
+fn builtin_begin(eval: &mut EvalEnvironment) -> Result<(), Error> {
+    // "begin" is ~syntactic sugar for a block.
+    // Evaluate each of the "args" as a body, in this environment.
+    // Our stack is already (body, environment), so we just need to:
+    eval.op_stack.push(Op::EvalBody);
+
+    // Do we need to introduce a nested environment?
+    // No : MIT scheme treats
+    // (begin (define a 1))
+    // as defining `a` in the parent environment.
+    Ok(())
 }
