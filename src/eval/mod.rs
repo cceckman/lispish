@@ -509,4 +509,23 @@ mod tests {
             v => panic!("unexpected result: {v:?}"),
         };
     }
+
+    #[test]
+    fn begin() {
+        // TODO: This is a hack for testing.
+        let mut eval = EvalEnvironment::new();
+        eval.start(
+            r#"
+        (define a (begin 1 2 3 4))
+        a
+        "#,
+        )
+        .unwrap();
+        eval.eval().unwrap();
+
+        match eval.result().unwrap() {
+            Object::Integer(4) => (),
+            v => panic!("unexpected result: {v:?}"),
+        };
+    }
 }
