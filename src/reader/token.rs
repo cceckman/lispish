@@ -34,7 +34,7 @@ pub fn tokenize(mut input: &[u8]) -> ReadResult<Vec<TokenOffset>> {
     // Line number (starting from 0 - fix it up when doing output)
     let mut line = 0;
     let mut column = 0;
-    while input.len() > 0 {
+    while !input.is_empty() {
         let next = get_next_token(input)
             .map_err(|err| err.annotate(format!("at line {} column {}", line + 1, column + 1)))?;
 
@@ -216,20 +216,7 @@ fn get_next_token(input: &[u8]) -> ReadResult<NextToken<'_>> {
             remainder: true_remainder,
         });
     }
-    if let Some(s) = regex::integer().find(input) {
-        let s = std::str::from_utf8(s.as_bytes())
-            .expect("internal error: regex recognized integer that was not utf-8");
-        let int: data::Integer = s.parse().map_err(|e| {
-            ReadErr::Error(format!("failed to convert \"{}\" into integer: {}", s, e))
-        })?;
-        let remainder = &input[s.len()..];
-        return Ok(NextToken {
-            token: Some(Token::Integer(int)),
-            lines: 0,
-            columns: s.len(),
-            remainder,
-        });
-    }
+
     if let Some(s) = regex::float().find(input) {
         let s = std::str::from_utf8(s.as_bytes())
             .expect("internal error: regex recognized float that was not utf-8");
@@ -239,6 +226,21 @@ fn get_next_token(input: &[u8]) -> ReadResult<NextToken<'_>> {
         let remainder = &input[s.len()..];
         return Ok(NextToken {
             token: Some(Token::Float(float)),
+            lines: 0,
+            columns: s.len(),
+            remainder,
+        });
+    }
+
+    if let Some(s) = regex::integer().find(input) {
+        let s = std::str::from_utf8(s.as_bytes())
+            .expect("internal error: regex recognized integer that was not utf-8");
+        let int: data::Integer = s.parse().map_err(|e| {
+            ReadErr::Error(format!("failed to convert \"{}\" into integer: {}", s, e))
+        })?;
+        let remainder = &input[s.len()..];
+        return Ok(NextToken {
+            token: Some(Token::Integer(int)),
             lines: 0,
             columns: s.len(),
             remainder,
@@ -301,7 +303,7 @@ mod tests {
 
     #[test]
     fn tokenize_atoms() -> Result<(), ReadErr> {
-        let input = br#"hello "hi" world 24601 -6"#;
+        let input = br#"hello "hi" world 24601 -6 -3.33 3.22"#;
         let output: Vec<Token> = tokenize(input)?.into_iter().map(|v| v.token).collect();
 
         let want = &[
@@ -310,6 +312,8 @@ mod tests {
             Token::Symbol("world".to_owned()),
             Token::Integer(24601),
             Token::Integer(-6),
+            Token::Float(-3.33),
+            Token::Float(3.22),
         ];
 
         assert_eq!(output.len(), want.len());
