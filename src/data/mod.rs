@@ -85,6 +85,16 @@ impl Generation {
             string_data: Default::default(),
         }
     }
+
+    /// Gets the "next" pointer for this object.
+    fn get_next(&self, old_ptr: StoredPtr) -> StoredPtr {
+        if old_ptr.is_nil() || old_ptr.is_symbol() {
+            old_ptr
+        } else {
+            let idx = unsafe { self.objects[old_ptr.idx()].tombstone };
+            StoredPtr::new(idx, old_ptr.tag())
+        }
+    }
 }
 
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
@@ -313,8 +323,9 @@ fn gc_internal(
     // TODO: Consider a stack rather than a queue. Measure: do we run faster with one or the other?
     // (Hypothesis: stack will result in better data locality.)
     while let Some(old_ptr) = queue.pop_front() {
-        // Internal check: we shouldn't traverse to nil pointers.
-        assert!(!old_ptr.is_nil());
+        // Internal check: we shouldn't traverse to nil pointers or to symbols,
+        // they're the same in the new generation.
+        assert!(!old_ptr.is_nil() && !old_ptr.is_symbol());
 
         let old_idx = old_ptr.idx();
         if live_objects.get(old_idx) {
@@ -349,13 +360,7 @@ fn gc_internal(
             if !live_objects.get(old_ptr.idx()) {
                 None
             } else {
-                Some((
-                    StoredPtr::new(
-                        unsafe { last_gen.objects[old_ptr.idx()].tombstone },
-                        old_ptr.tag(),
-                    ),
-                    v,
-                ))
+                Some((last_gen.get_next(old_ptr), v))
             }
         })
         .collect();
@@ -374,8 +379,7 @@ fn gc_internal(
         queue.push_back(**old_root);
         // All "live" objects in the old arena now contain a tombstone entry,
         // their index in the new arena.
-        let new_idx = unsafe { last_gen.objects[old_root.idx()].tombstone };
-        **old_root = StoredPtr::new(new_idx, old_root.tag())
+        **old_root = last_gen.get_next(**old_root);
     }
 
     // Now we have a list of "old" pointers in the heap to go through.
@@ -391,21 +395,18 @@ fn gc_internal(
         // We haven't visited this on the second pass yet.
         live_objects.clear(old_ptr.idx());
 
+        let new_ptr = last_gen.get_next(old_ptr);
         if old_ptr.is_pair() {
             // This is a pair; we need to update its inner pointers, in the new arena.
-            let new_idx = unsafe { last_gen.objects[old_ptr.idx()].tombstone };
-            let pair = unsafe { &mut next_gen.objects[new_idx].pair };
+            let pair = unsafe { &mut next_gen.objects[new_ptr.idx()].pair };
             // This object still contains the old pointers, because we haven't visited this node on this pass.
             // Put the old pointers in the queue, and update the new location.
             for rp in [&mut pair.car, &mut pair.cdr] {
-                if rp.is_nil() {
-                    // Nil is still nil.
-                    continue;
+                let new_ptr = last_gen.get_next(*rp);
+                if !(new_ptr.is_nil() || new_ptr.is_symbol()) {
+                    queue.push_back(*rp);
                 }
-                queue.push_back(*rp);
-                // And lookup + update the children - to the _new_ pointers:
-                let new_cr = unsafe { last_gen.objects[rp.idx()].tombstone };
-                *rp = StoredPtr::new(new_cr, rp.tag());
+                *rp = new_ptr;
             }
         }
         if old_ptr.is_string() {

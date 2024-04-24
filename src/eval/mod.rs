@@ -133,18 +133,19 @@ impl EvalEnvironment {
         // To clean up an evaluation,
         // 1. Clear any operands:
         self.op_stack.clear();
+
         // 2. Walk back the top-level stack to the top-level env:
-        // TODO: Allow eval-env to be in a "poison" state, instead of expecting here
         loop {
-            let p = pop(&self.store).expect("corrupted stack");
-            let Pair { cdr, .. } = get_pair(&self.store, p).expect("corrupted stack");
+            // TODO: "stack iterator" / "list iterator" in Rust?
+            // TODO: Allow eval-env to be in a "poison" state, instead of expecting here
+            let Pair { cdr, .. } = get_pair(&self.store, self.store.root()).unwrap();
             if cdr.is_nil() {
-                // Oops, we exhausted the stack. Push it back.
-                // p is still valid - we haven't gc'd.
-                push(&self.store, p);
+                // This is the top-level environment.
                 break;
             }
+            self.store.set_root(cdr);
         }
+        self.store.gc();
 
         #[cfg(feature = "render")]
         {
@@ -186,7 +187,6 @@ impl EvalEnvironment {
         // We'll execute by evalling the body.
         self.op_stack.push(Op::EvalBody);
 
-        // self.store.gc();
         Ok(())
     }
 
@@ -511,8 +511,25 @@ mod tests {
     }
 
     #[test]
+    fn restart() {
+        let mut eval = EvalEnvironment::new();
+        eval.start("1 2 3").unwrap();
+        eval.eval().unwrap();
+        match eval.result().unwrap() {
+            Object::Integer(3) => (),
+            v => panic!("unexpected result: {v:?}"),
+        };
+
+        eval.start("2 3 4").unwrap();
+        eval.eval().unwrap();
+        match eval.result().unwrap() {
+            Object::Integer(4) => (),
+            v => panic!("unexpected result: {v:?}"),
+        };
+    }
+
+    #[test]
     fn begin() {
-        // TODO: This is a hack for testing.
         let mut eval = EvalEnvironment::new();
         eval.start(
             r#"
