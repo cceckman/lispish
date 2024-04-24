@@ -113,6 +113,11 @@ impl EvalEnvironment {
             base_frame = store.put(Pair::cons(binding, base_frame));
         }
 
+        #[cfg(feature = "render")]
+        {
+            store.add_label(base_frame, "Builtins");
+        }
+
         // An environment is a list of frames.
         // TODO: I'm not sure this is accurate, or if there's another layer in there.
         let base_env = store.put(Pair::cons(base_frame, Ptr::nil()));

@@ -14,10 +14,10 @@ pub const BUILTINS: &[(&str, Builtin)] = &[
     ("define", builtin_define),
     ("begin", builtin_begin),
     ("lambda", builtin_unimplemented),
-    ("if", builtin_unimplemented),
-    ("cond", builtin_unimplemented),
-    ("quote", builtin_unimplemented),
-    ("apply", builtin_unimplemented),
+    // ("if", builtin_unimplemented),
+    // ("cond", builtin_unimplemented),
+    // ("quote", builtin_unimplemented),
+    // ("apply", builtin_unimplemented),
     // TODO: This is "just" for testing.
     ("one", builtin_one),
 ];
