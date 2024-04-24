@@ -13,7 +13,7 @@ fn node_for_ptr(p: Ptr) -> String {
 }
 
 /// Render the state of storage into Graphviz graph.
-pub fn render_store<'a>(store: &'a Storage, labeled_nodes: &HashMap<StoredPtr, String>) -> Vec<u8> {
+pub fn render_store(store: &Storage, labeled_nodes: &HashMap<StoredPtr, String>) -> Vec<u8> {
     let mut visited_objects = BitSet::new();
     let mut outbuf = Vec::new();
     {
@@ -34,14 +34,21 @@ pub fn render_store<'a>(store: &'a Storage, labeled_nodes: &HashMap<StoredPtr, S
 
             let id = node_for_ptr(it);
             let mut node = graph.node_named(&id);
+
+            let obj = store.get(it);
+            let (shape, newline) = match obj {
+                Object::Pair { .. } => (dot_writer::Shape::None, "<BR/>"),
+                _ => (dot_writer::Shape::Record, "\\n"),
+            };
+            node.set_shape(shape);
+
             let name = if let Some(label) = labeled_nodes.get(&it.raw) {
-                format!("{it}\n{label}")
+                format!("{it}{newline}<B>{label}</B>")
             } else {
                 format!("{it}")
             };
 
-            node.set_shape(dot_writer::Shape::Record);
-            match store.get(it) {
+            match obj {
                 Object::Nil => continue,
                 Object::Integer(v) => {
                     node.set_label(&format!("{{{name}|{v}}}"));
@@ -62,12 +69,11 @@ pub fn render_store<'a>(store: &'a Storage, labeled_nodes: &HashMap<StoredPtr, S
                     node.set_label(&format!("{{{name}|{fptr:p}}}"));
                 }
                 Object::Pair(Pair { car, cdr }) => {
-                    node.set_shape(dot_writer::Shape::None);
                     let label = format!(
                         "<{}>",
                         maud::html!(
                             table {
-                                tr { td colspan="2" border="0" { (name) } }
+                                tr { td colspan="2" border="0" { (maud::PreEscaped(name)) } }
                                 tr {
                                     td port="car" { (car) }
                                     td port="cdr" { (cdr) }
@@ -92,7 +98,7 @@ pub fn render_store<'a>(store: &'a Storage, labeled_nodes: &HashMap<StoredPtr, S
                             let id = {
                                 let mut sym_node = graph.node_auto();
                                 sym_node.set_shape(dot_writer::Shape::Record);
-                                sym_node.set_label(&format!("{{{name}|{v}}}"));
+                                sym_node.set_label(&format!("{{{ptr}|{v}}}"));
                                 sym_node.id()
                             };
                             graph.edge(port, id);
