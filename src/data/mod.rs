@@ -53,9 +53,9 @@ pub struct Storage {
 
     high_water: StorageStats,
 
-    /// Labelled nodes.
+    /// Node labels.
     /// These provide useful debugging info, like "this is the root of the stack".
-    labels: RefCell<HashMap<String, StoredPtr>>,
+    labels: RefCell<HashMap<StoredPtr, String>>,
 }
 
 /// Data that exists for a single "generation" (between GCs).
@@ -145,12 +145,12 @@ impl Storage {
         use self::render::render_store;
 
         let labels = self.labels.borrow();
-        render_store(self, labels.iter().map(|(k, v)| (*v, k.as_str())))
+        render_store(self, &labels)
     }
 
     #[cfg(feature = "render")]
     pub fn add_label(&self, p: Ptr, label: &str) {
-        self.labels.borrow_mut().insert(label.to_string(), p.raw);
+        self.labels.borrow_mut().insert(p.raw, label.to_string());
     }
 
     fn bind<'a, T: Bind<'a>>(&'a self, raw: T::Free) -> T {
@@ -189,7 +189,7 @@ impl Storage {
 
     /// Retrieve a symbol to the symbol table.
     pub fn get_symbol_ptr(&self, ptr: Ptr) -> Ref<'_, str> {
-        let symbol = DefaultSymbol::try_from_usize(ptr.idx() as usize).unwrap();
+        let symbol = DefaultSymbol::try_from_usize(ptr.idx()).unwrap();
         let symtab = self.symbols.borrow();
         Ref::map(symtab, |v| {
             v.resolve(symbol).expect("retrieved nonexistent symbol")
@@ -232,7 +232,7 @@ impl Storage {
             Object::Nil
         } else if ptr.is_symbol() {
             Object::Symbol(Symbol {
-                symbol: DefaultSymbol::try_from_usize(ptr.idx() as usize).unwrap(),
+                symbol: DefaultSymbol::try_from_usize(ptr.idx()).unwrap(),
             })
         } else {
             let stored = self.generation.borrow().get(ptr.raw);
@@ -265,11 +265,8 @@ impl Storage {
         let mut root = self.root.borrow_mut();
         let mut labels = self.labels.borrow_mut();
 
-        let mut roots: Vec<_> = labels
-            .values_mut()
-            .chain(std::iter::once(root.deref_mut()))
-            .collect();
-        *self.generation.get_mut() = gc(last_gen, &mut roots);
+        let mut roots = [root.deref_mut()];
+        *self.generation.get_mut() = gc_internal(last_gen, &mut roots, &mut labels);
     }
 
     /// Get a displayable representation of the item.
@@ -292,11 +289,15 @@ impl Storage {
 ///
 /// All pointers in the environment should be passed in via roots.
 /// Pointers can change across a GC pass; the GC routine will fix up those in storage and those in `roots`.
-fn gc(mut last_gen: Generation, old_roots: &mut [&mut StoredPtr]) -> Generation {
+fn gc_internal(
+    mut last_gen: Generation,
+    roots: &mut [&mut StoredPtr],
+    labels: &mut HashMap<StoredPtr, String>,
+) -> Generation {
     // TODO: Add trace output for debug
 
     let mut live_objects = BitSet::new();
-    let mut queue: VecDeque<StoredPtr> = old_roots
+    let mut queue: VecDeque<StoredPtr> = roots
         .iter()
         .filter_map(|v| if !v.is_nil() { Some(**v) } else { None })
         .collect();
@@ -324,7 +325,9 @@ fn gc(mut last_gen: Generation, old_roots: &mut [&mut StoredPtr]) -> Generation 
         let got = last_gen.get(old_ptr);
         if let Some(p) = got.as_pair(old_ptr) {
             for rp in [p.car, p.cdr] {
-                if !rp.is_nil() && !live_objects.get(rp.idx()) {
+                // Skip over nil (always 0) and symbols (different indices,
+                // perpetual).
+                if !rp.is_nil() && !rp.is_symbol() && !live_objects.get(rp.idx()) {
                     queue.push_back(rp);
                 }
             }
@@ -339,14 +342,32 @@ fn gc(mut last_gen: Generation, old_roots: &mut [&mut StoredPtr]) -> Generation 
         last_gen.objects[old_ptr.idx()].tombstone = new_ptr.idx();
     }
 
-    // We have three more steps:
-    // -    We need to update the roots to have the new indices. Fairly simple.
+    // Now that we've moved everything, we can update labels, dropping any unused.
+    *labels = labels
+        .drain()
+        .filter_map(|(old_ptr, v)| {
+            if !live_objects.get(old_ptr.idx()) {
+                None
+            } else {
+                Some((
+                    StoredPtr::new(
+                        unsafe { last_gen.objects[old_ptr.idx()].tombstone },
+                        old_ptr.tag(),
+                    ),
+                    v,
+                ))
+            }
+        })
+        .collect();
+
+    // Three more steps:
+    // -    We need to update the roots and stored-ptrs to have the new indices. Fairly simple.
     // -    We need to update all the heap pointers to reflect their
     //      new indices - a second walk.
     // -    And we need to copy the string contents.
     // First case is easy, let's do it right quick,
     // while also forming the "new old pointers" list we'll need to update later.
-    for old_root in old_roots.iter_mut() {
+    for old_root in roots.iter_mut() {
         if old_root.is_nil() {
             continue;
         }
@@ -692,5 +713,29 @@ mod tests {
             }
             _ => panic!("unexpected object: {:?}", top),
         };
+    }
+
+    #[test]
+    fn gc_symbols() {
+        let mut store = Storage::default();
+
+        // Set up some symbols.
+        // Symbols have a separate index space!
+        let define = store.put_symbol("define");
+        let lambda = store.put_symbol("lambda");
+        let _cool = store.put_symbol("cool");
+        let a = store.put(1i64);
+        let _b = store.put(2i64);
+
+        // We won't hold on to object b or symbol cool.
+        let x = store.put(Pair::cons(define, Ptr::nil()));
+        let y = store.put(Pair::cons(lambda, x));
+        let root = store.put(Pair::cons(a, y));
+        store.set_root(root);
+
+        assert_eq!(store.current_stats().objects, 5);
+        store.gc();
+        // Keep: a, y, x, root.
+        assert_eq!(store.current_stats().objects, 4);
     }
 }

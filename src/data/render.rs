@@ -5,6 +5,7 @@ use dot_writer::DotWriter;
 
 use crate::data::{Object, Pair, Ptr, Storage};
 
+use super::bitset::BitSet;
 use super::StoredPtr;
 
 fn node_for_ptr(p: Ptr) -> String {
@@ -12,11 +13,8 @@ fn node_for_ptr(p: Ptr) -> String {
 }
 
 /// Render the state of storage into Graphviz graph.
-pub fn render_store<'a>(
-    store: &'a Storage,
-    labeled_nodes: impl IntoIterator<Item = (StoredPtr, &'a str)>,
-) -> Vec<u8> {
-    let names: HashMap<_, &'a str> = labeled_nodes.into_iter().collect();
+pub fn render_store<'a>(store: &'a Storage, labeled_nodes: &HashMap<StoredPtr, String>) -> Vec<u8> {
+    let mut visited_objects = BitSet::new();
     let mut outbuf = Vec::new();
     {
         let mut writer = DotWriter::from(&mut outbuf);
@@ -25,6 +23,10 @@ pub fn render_store<'a>(
         queue.push_back(store.root());
 
         while let Some(it) = queue.pop_front() {
+            if visited_objects.get(it.idx()) {
+                continue;
+            }
+            visited_objects.set(it.idx());
             if it.is_nil() {
                 // We render nil pointers at their source, not their destination.
                 continue;
@@ -32,7 +34,7 @@ pub fn render_store<'a>(
 
             let id = node_for_ptr(it);
             let mut node = graph.node_named(&id);
-            let name = if let Some(label) = names.get(&it.raw) {
+            let name = if let Some(label) = labeled_nodes.get(&it.raw) {
                 format!("{it}\n{label}")
             } else {
                 format!("{it}")
@@ -61,8 +63,6 @@ pub fn render_store<'a>(
                 }
                 Object::Pair(Pair { car, cdr }) => {
                     node.set_shape(dot_writer::Shape::None);
-                    let car_name = node_for_ptr(car);
-                    let cdr_name = node_for_ptr(cdr);
                     let label = format!(
                         "<{}>",
                         maud::html!(
@@ -80,13 +80,27 @@ pub fn render_store<'a>(
                     let car_port = node.id().port("car");
                     let cdr_port = node.id().port("cdr");
                     std::mem::drop(node);
-                    if !car.is_nil() {
-                        queue.push_back(car);
-                        graph.edge(car_port, car_name);
-                    }
-                    if !cdr.is_nil() {
-                        queue.push_back(cdr);
-                        graph.edge(cdr_port, cdr_name);
+
+                    for (ptr, port) in [(car, car_port), (cdr, cdr_port)] {
+                        if ptr.is_nil() {
+                            continue;
+                        }
+                        // Symbols are addressed by their intern ID, not by an object.
+                        // Unique them (so we don't have long edges to the definitions)
+                        if ptr.is_symbol() {
+                            let v = store.get_symbol_ptr(ptr);
+                            let id = {
+                                let mut sym_node = graph.node_auto();
+                                sym_node.set_shape(dot_writer::Shape::Record);
+                                sym_node.set_label(&format!("{{{name}|{v}}}"));
+                                sym_node.id()
+                            };
+                            graph.edge(port, id);
+                            continue;
+                        }
+                        let name = node_for_ptr(ptr);
+                        graph.edge(port, name);
+                        queue.push_back(ptr);
                     }
                 }
             }

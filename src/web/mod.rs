@@ -83,25 +83,33 @@ impl Session {
         let state = self.state.render_html().map_err(to_http_error)?;
 
         Ok(maud::html!(
-                    DOCTYPE
-                    html {
-                        head {
-                            title { (self.name) }
-                            link rel="stylesheet" href="/style.css";
-                        }
-                        body {
-                            main {
-                                form method="post" { div class="history" {
-                                    @for history in self.history.iter() {
-                                    div class="historyline" {
-                                        textarea class="expression" disabled { (history.0) }
-                                        p class="result" { (history.1) }
-                                    }
-        }
-                                    @if let Some(content) = tbcontent {
-                                        textarea class="history latest" disabled { (content) }
-                                    } @else {
-                                        textarea class="history latest" name="expression" {  }
+                DOCTYPE
+                html {
+                    head {
+                        title { (self.name) }
+                        link rel="stylesheet" href="/style.css";
+                    }
+                    body {
+                        main {
+                            div {
+                                h3 { "Expressions" }
+                                form method="post" {
+
+                                    table class="history" {
+                                        @for history in self.history.iter() {
+                                            tr class="historyline" {
+                                                td { textarea class="expression" disabled { (history.0) } }
+                                                td class="result" { (history.1) }
+                                            }
+                                        }
+                                        tr { td {
+                                            @if let Some(content) = tbcontent {
+                                                textarea class="expression latest" disabled { (content) }
+                                            } @else {
+                                                textarea class="expression latest" name="expression" {  }
+                                            }
+                                            } td class="expression";
+                                        }
                                     }
                                     div id="control" {
                                         // input   type="submit"
@@ -113,12 +121,13 @@ impl Session {
                                                 method="post"
                                                 formaction=(format!("/sessions/{}/step", &self.name));
                                     }
-                                }}
-                                div { (state) }
+                                }
                             }
+                            div { (state) }
                         }
                     }
-            ))
+                }
+        ))
     }
 }
 
