@@ -38,12 +38,17 @@ impl EvalEnvironment {
 
         Ok(maud::html!(
             div class="eval" {
-                div class="stack" { table {
+                div {
+                h3 { "Op Stack" }
+                table class="stack" {
                     @for op in self.op_stack.iter().rev() {
                         tr { td { (op) } }
                     }
+                    tr { td; }
                 }}
                 div class="heap" {
+
+                    h3 { "Storage" }
                     (maud::PreEscaped(graph_svg))
                 }
             }
