@@ -1,4 +1,4 @@
-//!Lisp evaluator.
+//! Lisp evaluator.
 //!
 //! This evaluator is based on bytecode. It has three stacks of state:
 //!
@@ -148,7 +148,7 @@ impl EvalEnvironment {
 
         #[cfg(feature = "render")]
         {
-            self.store().add_label(self.store().root(), "TOP ENV");
+            self.store.add_label(self.store.root(), "TOP ENV");
         }
 
         let body = match reader::parse_body(&self.store, body.as_bytes()) {
@@ -161,7 +161,7 @@ impl EvalEnvironment {
 
         #[cfg(feature = "render")]
         {
-            self.store().add_label(body, "BODY");
+            self.store.add_label(body, "BODY");
         }
 
         // When idle, the top-level environment is the only thing on the stack.
@@ -180,7 +180,7 @@ impl EvalEnvironment {
 
         #[cfg(feature = "render")]
         {
-            self.store().add_label(self.store.root(), "STACK");
+            self.store.add_label(self.store.root(), "STACK");
         }
 
         // We'll execute by evalling the body.
@@ -199,7 +199,7 @@ impl EvalEnvironment {
     /// wind up taking a mutable borrow, preventing retrieval of results.
     pub fn result(&self) -> Result<Object, Error> {
         if self.op_stack.is_empty() {
-            Ok(self.store().get(peek(self.store())?))
+            Ok(self.store.get(peek(&self.store)?))
         } else {
             Err(Error::Fault("retrieved result when not ready".to_string()))
         }
