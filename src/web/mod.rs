@@ -78,7 +78,7 @@ impl Session {
         }
     }
 
-    fn render(&self) -> Result<impl IntoResponse, (StatusCode, String)> {
+    fn render(&self) -> Result<maud::PreEscaped<String>, (StatusCode, String)> {
         let tbcontent = &self.expression;
         let state = self.state.render_html().map_err(to_http_error)?;
 
@@ -123,7 +123,7 @@ impl Session {
                                     }
                                 }
                             }
-                            div { (state) }
+                            div class="state" { (state) }
                         }
                     }
                 }
@@ -150,7 +150,7 @@ impl SessionHandler {
     async fn get(
         sessions: axum::extract::State<SessionHandler>,
         Path(session): Path<String>,
-    ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    ) -> Result<impl IntoResponse, impl IntoResponse> {
         let session = sessions.0.session_ptr(&session).await;
         let session = session.lock().await;
         session.render()
@@ -160,19 +160,18 @@ impl SessionHandler {
         sessions: axum::extract::State<SessionHandler>,
         Path(session_name): Path<String>,
         Form(form): Form<HashMap<String, String>>,
-    ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    ) -> Result<impl IntoResponse, axum::http::Response<axum::body::Body>> {
         let session = sessions.0.session_ptr(&session_name).await;
         let mut session = session.lock().await;
 
-        // TODO: Still render, even with an error-status code.
-        session
-            .step(form.get("expression").map(|s| s.as_str()).unwrap_or(""))
-            .map_err(to_http_error)?;
+        // We always return "OK" and redirect-
+        // even a system error gets displayed next time around.
 
+        // TODO: log fault-type errors.
+        let _ = session.step(form.get("expression").map(|e| e.as_str()).unwrap_or(""));
         Ok((
             StatusCode::SEE_OTHER,
             [(LOCATION, format!("/sessions/{session_name}"))],
-            "",
         ))
     }
 }
@@ -190,6 +189,7 @@ pub fn get_server() -> axum::Router {
             get(|| async { ([(axum::http::header::CONTENT_TYPE, "text/css")], STYLE) }),
         )
         .route("/sessions/:session", get(SessionHandler::get))
+        .route("/sessions/:session/", get(SessionHandler::get))
         .route("/sessions/:session/step", post(SessionHandler::step))
         .with_state(sessions)
 }
