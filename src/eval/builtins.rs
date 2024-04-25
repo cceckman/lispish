@@ -51,7 +51,7 @@ fn builtin_define(eval: &mut EvalEnvironment) -> Result<(), Error> {
         // treat them as additional roots, until the next start call.
         Err(_) => {
             return Err(Error::UserError(format!(
-                "define statement is missing body; got {} instead of body",
+                "define statement is missing arguments; got {} instead of body",
                 args
             )))
         }
@@ -67,12 +67,13 @@ fn builtin_define(eval: &mut EvalEnvironment) -> Result<(), Error> {
         // Variable binding. We'll add to the current environment:
         push(eval.store(), env);
         push(eval.store(), binding);
-        // After evaluating the body- which must be a single expression,
-        // but which is _represented as a body.
+        // After evaluating the body...
+        // which (for a variable) must be a single, nonempty expression.
         let Pair {
             car: value,
             cdr: nil,
-        } = get_pair(eval.store(), body)?;
+        } = get_pair(eval.store(), body)
+            .map_err(|_| Error::UserError("define-variable must have a body".to_string()))?;
         if !nil.is_nil() {
             return Err(Error::UserError(format!(
                 "define-variable body {} is not a single expression",

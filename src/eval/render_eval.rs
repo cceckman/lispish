@@ -47,7 +47,6 @@ impl EvalEnvironment {
                     tr { td; }
                 }}
                 div class="heap" {
-
                     h3 { "Storage" }
                     (maud::PreEscaped(graph_svg))
                 }

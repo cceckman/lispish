@@ -164,6 +164,8 @@ impl EvalEnvironment {
                 return Err(Error::UserError(format!("{e}")));
             }
         };
+        // TODO: Currently "empty list", i.e. empty input, comes up as "system error".
+        // That's not right; it should come up as "need more input"...right?
 
         #[cfg(feature = "render")]
         {
@@ -232,6 +234,14 @@ impl EvalEnvironment {
                 // Pop twice: body, then environment.
                 let body = pop(&self.store)?;
                 let env = pop(&self.store)?;
+
+                // An empty body is invalid.
+                if body.is_nil() {
+                    Err(Error::UserError(
+                        "empty body cannot be evaluated".to_string(),
+                    ))?;
+                }
+
                 // Deconstruct the body:
                 let Pair {
                     car: expression,
@@ -416,9 +426,9 @@ pub type Builtin = fn(&mut EvalEnvironment) -> Result<(), Error>;
 
 #[cfg(test)]
 mod tests {
-    use crate::data::Object;
-
+    use super::Error;
     use super::EvalEnvironment;
+    use crate::data::Object;
 
     #[test]
     fn int_eval() {
@@ -548,6 +558,54 @@ mod tests {
         match eval.result().unwrap() {
             Object::Integer(4) => (),
             v => panic!("unexpected result: {v:?}"),
+        };
+    }
+
+    #[test]
+    fn define_requires_symbol() {
+        let mut eval = EvalEnvironment::new();
+        eval.start(
+            r#"
+        (define 1 39)
+        a
+        "#,
+        )
+        .unwrap();
+        match eval.eval() {
+            Err(Error::UserError(_)) => (),
+            v => panic!("unexpected eval result: {:?}", v),
+        };
+    }
+
+    #[test]
+    fn define_requires_body() {
+        let mut eval = EvalEnvironment::new();
+        eval.start(
+            r#"
+        (define a)
+        a
+        "#,
+        )
+        .unwrap();
+        match eval.eval() {
+            Err(Error::UserError(_)) => (),
+            v => panic!("unexpected eval result: {:?}", v),
+        };
+    }
+
+    #[test]
+    fn define_body_is_expression() {
+        let mut eval = EvalEnvironment::new();
+        eval.start(
+            r#"
+        (define a 1 2 3)
+        a
+        "#,
+        )
+        .unwrap();
+        match eval.eval() {
+            Err(Error::UserError(_)) => (),
+            v => panic!("unexpected eval result: {:?}", v),
         };
     }
 }
