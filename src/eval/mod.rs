@@ -57,7 +57,7 @@ enum Op {
     Discard,
 
     // After evaluating the first argument, deal with rest of the form based on the result.
-    // Precondition: stack is (eval item, tail of expression, environment).
+    // Precondition: stack is (eval item, environment, tail of expression).
     EvalForm,
 
     // Add a variable to the provided environment.
@@ -282,8 +282,8 @@ impl EvalEnvironment {
                     }
                     Object::Pair(Pair { car, cdr }) => {
                         // Prepare "apply the form":
-                        push(&self.store, env);
                         push(&self.store, cdr);
+                        push(&self.store, env);
                         // But first, we need to work out what the first argument is-
                         // function or builtin, hopefully.
                         self.op_stack.push(Op::EvalForm);
