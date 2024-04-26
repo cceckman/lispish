@@ -49,7 +49,7 @@ impl<T> From<Error> for Result<T, Error> {
 }
 
 enum Op {
-    // Precondition: stack is (body, environment)
+    // Precondition: stack is (environment, body)
     EvalBody,
     // Preconditon: stack is (expression, environment)
     EvalExpr,
@@ -180,11 +180,11 @@ impl EvalEnvironment {
 
         // Eval-expression calls consume their environment.
         // To ensure we don't lose the top-level environment - that we wind up with "no results" -
-        // ensure that the stack reads (body top top) to start off with.
+        // ensure that the stack reads (top body top) to start off with.
         // When we complete evaluation, we'll have (result top)-
         // and can do a final pop of (result).
-        push(&self.store, top_env);
         push(&self.store, body);
+        push(&self.store, top_env);
 
         #[cfg(feature = "render")]
         {
@@ -231,9 +231,9 @@ impl EvalEnvironment {
                 pop(&self.store)?;
             }
             Op::EvalBody => {
-                // Pop twice: body, then environment.
-                let body = pop(&self.store)?;
+                // Pop twice: environment, then body.
                 let env = pop(&self.store)?;
+                let body = pop(&self.store)?;
 
                 // An empty body is invalid.
                 if body.is_nil() {
@@ -251,8 +251,8 @@ impl EvalEnvironment {
                 if !next.is_nil() {
                     // We'll need to continue evaluating the body,
                     // in this same environment.
-                    push(&self.store, env);
                     push(&self.store, next);
+                    push(&self.store, env);
                     self.op_stack.push(Op::EvalBody);
                     // ...but the evaluated value of this expression will be on the stack
                     // on top of them.
