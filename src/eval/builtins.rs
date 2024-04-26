@@ -28,15 +28,15 @@ fn builtin_unimplemented(_eval: &mut EvalEnvironment) -> Result<(), Error> {
 
 /// The `one` builtin: evaluate to 1.
 fn builtin_one(eval: &mut EvalEnvironment) -> Result<(), Error> {
-    let _args = pop(eval.store())?;
     let _env = pop(eval.store())?;
+    let _args = pop(eval.store())?;
     push(eval.store(), eval.store().put(1i64));
     Ok(())
 }
 
 fn builtin_define(eval: &mut EvalEnvironment) -> Result<(), Error> {
-    let args = pop(eval.store())?;
     let env = pop(eval.store())?;
+    let args = pop(eval.store())?;
 
     // Are we defining a function or a variable?
     let binding: Ptr<'_>;
@@ -98,8 +98,8 @@ fn builtin_begin(eval: &mut EvalEnvironment) -> Result<(), Error> {
     // "begin" is ~syntactic sugar for a block.
     // Evaluate each of the "args" as a body, in this environment.
     // Our stack is (body, environment), so we just need to:
-    let body = pop(&eval.store)?;
     let env = pop(&eval.store)?;
+    let body = pop(&eval.store)?;
     push(&eval.store, body);
     push(&eval.store, env);
     eval.op_stack.push(Op::EvalBody);
