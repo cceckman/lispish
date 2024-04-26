@@ -80,8 +80,8 @@ fn builtin_define(eval: &mut EvalEnvironment) -> Result<(), Error> {
                 body
             )));
         }
-        push(eval.store(), env);
         push(eval.store(), value);
+        push(eval.store(), env);
         eval.op_stack.push(Op::Bind);
         eval.op_stack.push(Op::EvalExpr);
 
