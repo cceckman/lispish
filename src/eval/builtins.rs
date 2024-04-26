@@ -97,7 +97,11 @@ fn builtin_define(eval: &mut EvalEnvironment) -> Result<(), Error> {
 fn builtin_begin(eval: &mut EvalEnvironment) -> Result<(), Error> {
     // "begin" is ~syntactic sugar for a block.
     // Evaluate each of the "args" as a body, in this environment.
-    // Our stack is already (body, environment), so we just need to:
+    // Our stack is (body, environment), so we just need to:
+    let body = pop(&eval.store)?;
+    let env = pop(&eval.store)?;
+    push(&eval.store, body);
+    push(&eval.store, env);
     eval.op_stack.push(Op::EvalBody);
 
     // Do we need to introduce a nested environment?
