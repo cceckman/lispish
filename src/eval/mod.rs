@@ -49,19 +49,43 @@ impl<T> From<Error> for Result<T, Error> {
 }
 
 enum Op {
+    // Evaluate each of the expressions in the body,
+    // discarding the results of all but the last after evaluation.
     // Precondition: stack is (environment, body)
+    // Postcondition: stack is (value)
     EvalBody,
+    // Evaluate a single expression.
     // Preconditon: stack is (environment, expresion)
+    // Postcondition: stack is (value)
     EvalExpr,
+    // Evaluate each expression in the body and accumulate them into a list,
+    // in the same order.
+    // Precondition: stack is (accumulator, environment, body);
+    // accumulator must be a pointer to a cons cell, _not_ nil.
+    // Postcondition: empty stack. Caller should Cdr the original accumulator value.
+    EvalList,
+
+    // Append the expression on the top of the stack to the end of an accumulator.
+    // Evaluates to the new tail.
+    // Precondition: stack is (expression, accumulator)
+    // Postcondition: stack is (new accumulator tail)
+    Append,
     // Precondition: stack is (value to be discarded).
+    // Postcondition: empty stack.
     Discard,
+    // Discard the head of the list at the top of the stack.
+    // Precondition: stack is (cons cell).
+    // Postcondition: stack is (cdr of that cell).
+    Cdr,
 
     // After evaluating the first argument, deal with rest of the form based on the result.
     // Precondition: stack is (eval item, environment, tail of expression).
+    // Postcondition: stack is (value) of evaluating the form.
     EvalForm,
 
     // Add a variable to the provided environment.
     // Precondition: stack is (value, symbol, environment).
+    // Postcondition: empty stack.
     Bind,
 }
 
@@ -73,8 +97,11 @@ impl Display for Op {
             match self {
                 Op::EvalBody => "EvalBody",
                 Op::EvalExpr => "EvalExpr",
-                Op::Discard => "Discard",
                 Op::EvalForm => "EvalForm",
+                Op::EvalList => "EvalList",
+                Op::Append => "Append",
+                Op::Discard => "Discard",
+                Op::Cdr => "Cdr",
                 Op::Bind => "Bind",
             }
         )
@@ -201,6 +228,17 @@ impl EvalEnvironment {
         &self.store
     }
 
+    /// Retrieve a pointer to the result of an evaluation, if complete.
+    /// This is required as a separate method because `eval` and `step`
+    /// wind up taking a mutable borrow, preventing retrieval of results.
+    pub fn result_ptr(&self) -> Result<Ptr, Error> {
+        if self.op_stack.is_empty() {
+            peek(&self.store)
+        } else {
+            Err(Error::Fault("retrieved result when not ready".to_string()))
+        }
+    }
+
     /// Retrieve the result of an evaluation, if complete.
     /// This is required as a separate method because `eval` and `step`
     /// wind up taking a mutable borrow, preventing retrieval of results.
@@ -226,10 +264,6 @@ impl EvalEnvironment {
         };
 
         match op {
-            Op::Discard => {
-                // Simple enough:
-                pop(&self.store)?;
-            }
             Op::EvalBody => {
                 // Pop twice: environment, then body.
                 let env = pop(&self.store)?;
@@ -297,6 +331,62 @@ impl EvalEnvironment {
                         push(&self.store, expr);
                     }
                 }
+            }
+            Op::EvalList => {
+                let accumulator = pop(&self.store)?;
+                let env = pop(&self.store)?;
+                let body = pop(&self.store)?;
+                match self.store.get(body) {
+                    Object::Pair(Pair {
+                        car: expr,
+                        cdr: next,
+                    }) => {
+                        // Chain to the next op.
+                        // For EvalList:
+                        push(&self.store, next);
+                        push(&self.store, env);
+                        // For Append:
+                        push(&self.store, accumulator);
+                        // For EvalExpr:
+                        push(&self.store, expr);
+                        push(&self.store, env);
+                        self.op_stack.push(Op::EvalList);
+                        self.op_stack.push(Op::Append);
+                        self.op_stack.push(Op::EvalExpr);
+                    }
+                    // Caller should have the head of the accumulate list.
+                    Object::Nil => (),
+                    _ => return Err(Error::Fault("EvalList with non-list body".to_string())),
+                }
+            }
+            Op::Append => {
+                let expr = pop(&self.store)?;
+                let cell = pop(&self.store)?;
+                let pair = get_pair(&self.store, cell)?;
+                if !pair.cdr.is_nil() {
+                    return Err(Error::Fault("Append cell is not tail of list".to_string()));
+                }
+                let next = self.store.put(Pair {
+                    car: expr,
+                    cdr: Ptr::nil(),
+                });
+                self.store.update(
+                    cell,
+                    Pair {
+                        car: pair.car,
+                        cdr: next,
+                    },
+                );
+                push(&self.store, next);
+            }
+            Op::Discard => {
+                // Simple enough:
+                pop(&self.store)?;
+            }
+            Op::Cdr => {
+                let cell = pop(&self.store)?;
+                let Pair { cdr, .. } = get_pair(&self.store, cell)?;
+                push(&self.store, cdr);
             }
             Op::EvalForm => {
                 // Stack is (applicator, tail of expr, environment).
@@ -426,9 +516,8 @@ pub type Builtin = fn(&mut EvalEnvironment) -> Result<(), Error>;
 
 #[cfg(test)]
 mod tests {
-    use super::Error;
-    use super::EvalEnvironment;
-    use crate::data::Object;
+    use super::*;
+    use crate::data::{Object, Pair, Ptr};
 
     #[test]
     fn int_eval() {
@@ -607,5 +696,44 @@ mod tests {
             Err(Error::UserError(_)) => (),
             v => panic!("unexpected eval result: {:?}", v),
         };
+    }
+
+    #[test]
+    fn nonempty_list() {
+        let mut eval = EvalEnvironment::new();
+        eval.start(
+            r#"
+        (list 1 2 3)
+        "#,
+        )
+        .unwrap();
+        eval.eval().unwrap();
+        let mut head = eval.result_ptr().unwrap();
+        for value in [1, 2, 3] {
+            let pt: Ptr;
+            Pair { car: pt, cdr: head } = get_pair(eval.store(), head).unwrap();
+            match eval.store().get(pt) {
+                Object::Integer(v) => assert_eq!(v, value),
+                v => panic!(
+                    "unexpected object: wanted integer {}, got {}",
+                    value,
+                    eval.store().display(v)
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn empty_list() {
+        let mut eval = EvalEnvironment::new();
+        eval.start(
+            r#"
+        (list)
+        "#,
+        )
+        .unwrap();
+        eval.eval().unwrap();
+        let head = eval.result_ptr().unwrap();
+        assert!(head.is_nil());
     }
 }
