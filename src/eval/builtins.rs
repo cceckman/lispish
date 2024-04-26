@@ -14,6 +14,7 @@ pub const BUILTINS: &[(&str, Builtin)] = &[
     ("define", builtin_define),
     ("begin", builtin_begin),
     ("lambda", builtin_unimplemented),
+    ("list", builtin_list),
     // ("if", builtin_unimplemented),
     // ("cond", builtin_unimplemented),
     // ("quote", builtin_unimplemented),
@@ -97,7 +98,6 @@ fn builtin_define(eval: &mut EvalEnvironment) -> Result<(), Error> {
 fn builtin_begin(eval: &mut EvalEnvironment) -> Result<(), Error> {
     // "begin" is ~syntactic sugar for a block.
     // Evaluate each of the "args" as a body, in this environment.
-    // Our stack is (body, environment), so we just need to:
     let env = pop(&eval.store)?;
     let body = pop(&eval.store)?;
     push(&eval.store, body);
@@ -108,5 +108,31 @@ fn builtin_begin(eval: &mut EvalEnvironment) -> Result<(), Error> {
     // No : MIT scheme treats
     // (begin (define a 1))
     // as defining `a` in the parent environment.
+    Ok(())
+}
+
+fn builtin_list(eval: &mut EvalEnvironment) -> Result<(), Error> {
+    // "list" just means to treat the arguments as a list.
+    // But we have to evaluate each of them in turn.
+    let env = pop(&eval.store)?;
+    let body = pop(&eval.store)?;
+
+    // Create a "nil head" to accumulate into.
+    // This will be our result later, after a Cdr op:
+    let nil_head = eval.store.put(Pair::cons(Ptr::nil(), Ptr::nil()));
+    push(&eval.store, nil_head);
+
+    // We'll need to evaluate the list, though:
+    push(&eval.store, body);
+    push(&eval.store, env);
+    // Note that here, nil_head is the list _tail_;
+    // above, it's the list _head_.
+    push(&eval.store, nil_head);
+
+    // Once the eval-list is done, we'll want to get the "real" list head:
+    eval.op_stack.push(Op::Cdr);
+    // But first, eval-list:
+    eval.op_stack.push(Op::EvalList);
+
     Ok(())
 }
