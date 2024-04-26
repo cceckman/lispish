@@ -51,7 +51,7 @@ impl<T> From<Error> for Result<T, Error> {
 enum Op {
     // Precondition: stack is (environment, body)
     EvalBody,
-    // Preconditon: stack is (expression, environment)
+    // Preconditon: stack is (environment, expresion)
     EvalExpr,
     // Precondition: stack is (value to be discarded).
     Discard,
@@ -263,14 +263,14 @@ impl EvalEnvironment {
                 // the result of a body expression is evaluation of the final expression.
 
                 // Evaluate this expression in this environment.
-                push(&self.store, env);
                 push(&self.store, expression);
+                push(&self.store, env);
                 self.op_stack.push(Op::EvalExpr);
             }
             Op::EvalExpr => {
-                // Pop twice: expression, then environment.
-                let expr = pop(&self.store)?;
+                // Pop twice: environment, then expression.
                 let env = pop(&self.store)?;
+                let expr = pop(&self.store)?;
 
                 match self.store.get(expr) {
                     Object::Symbol(_) => {
@@ -288,8 +288,8 @@ impl EvalEnvironment {
                         // function or builtin, hopefully.
                         self.op_stack.push(Op::EvalForm);
                         // But we need to evaluate the first item first.
-                        push(&self.store, env);
                         push(&self.store, car);
+                        push(&self.store, env);
                         self.op_stack.push(Op::EvalExpr);
                     }
                     // All other types evaluate to themselves.
