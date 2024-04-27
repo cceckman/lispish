@@ -1,4 +1,4 @@
-use crate::eval::{get_pair, pop, push, Builtin, Error, EvalEnvironment, Op};
+use crate::eval::{get_pair, pop, push, Builtin, Error, EvalEnvironment, Op, ToUserError};
 
 use crate::data::{Pair, Ptr};
 
@@ -46,17 +46,10 @@ fn builtin_define(eval: &mut EvalEnvironment) -> Result<(), Error> {
     Pair {
         car: binding,
         cdr: body,
-    } = match get_pair(eval.store(), args) {
-        Ok(v) => v,
-        // TODO: A nice error capability would be to be able to mark nodes as "in error" and
-        // treat them as additional roots, until the next start call.
-        Err(_) => {
-            return Err(Error::UserError(format!(
-                "define statement is missing arguments; got {} instead of body",
-                args
-            )))
-        }
-    };
+    } = get_pair(eval.store(), args).to_user_error(format!(
+        "define statement is missing arguments; got {} instead of body",
+        args
+    ))?;
 
     if binding.is_pair() {
         return Err(Error::Fault(
@@ -73,8 +66,7 @@ fn builtin_define(eval: &mut EvalEnvironment) -> Result<(), Error> {
         let Pair {
             car: value,
             cdr: nil,
-        } = get_pair(eval.store(), body)
-            .map_err(|_| Error::UserError("define-variable must have a body".to_string()))?;
+        } = get_pair(eval.store(), body).to_user_error("define-variable must have a body")?;
         if !nil.is_nil() {
             return Err(Error::UserError(format!(
                 "define-variable body {} is not a single expression",
