@@ -13,7 +13,7 @@ pub const MASKED_BUILTINS: &[(&str, Builtin)] = &[("builtin:add", builtin_unimpl
 pub const BUILTINS: &[(&str, Builtin)] = &[
     ("define", builtin_define),
     ("begin", builtin_begin),
-    ("lambda", builtin_unimplemented),
+    ("lambda", builtin_lambda),
     ("list", builtin_list),
     // ("if", builtin_unimplemented),
     // ("cond", builtin_unimplemented),
@@ -127,4 +127,18 @@ fn builtin_list(eval: &mut EvalEnvironment) -> Result<(), Error> {
     eval.op_stack.push(Op::EvalList);
 
     Ok(())
+}
+
+fn builtin_lambda(eval: &mut EvalEnvironment) -> Result<(), Error> {
+    // Remaining stack is:
+    let env = pop(&eval.store)?;
+    let tail = pop(&eval.store)?;
+
+    // Deconstruct the tail further:
+    let Pair {
+        car: parameters,
+        cdr: body,
+    } = get_pair(&eval.store, tail).to_user_error()?;
+
+    todo!()
 }
