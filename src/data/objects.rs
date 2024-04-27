@@ -1,4 +1,3 @@
-//! Lisp object types
 use std::{marker::PhantomData, ops::Range};
 
 use crate::eval::Builtin;
@@ -15,11 +14,8 @@ pub enum Object<'a> {
     String(LString<'a>) = StoredPtr::TAG_STRING,
     Symbol(Symbol) = StoredPtr::TAG_SYMBOL,
     Pair(Pair<'a>) = StoredPtr::TAG_PAIR,
-
+    Function(Pair<'a>) = StoredPtr::TAG_FUNCTION,
     Builtin(Builtin) = StoredPtr::TAG_BUILTIN,
-    // TODO:
-    // - Lisp Function
-    // - Builtin (primitive / form)
 }
 
 /// An ID for a stored object: a combination of pointer and type-tag.
@@ -173,6 +169,15 @@ impl From<Object<'_>> for (StoredValue, u8) {
             Object::Float(f) => (StoredValue { float: f }, object.tag()),
             Object::String(s) => (StoredValue { string: s.raw }, object.tag()),
             Object::Pair(p) => (
+                StoredValue {
+                    pair: StoredPair {
+                        car: p.car.raw,
+                        cdr: p.cdr.raw,
+                    },
+                },
+                object.tag(),
+            ),
+            Object::Function(p) => (
                 StoredValue {
                     pair: StoredPair {
                         car: p.car.raw,

@@ -288,6 +288,7 @@ impl Storage {
             Object::String(j) => format!("\"{}\"", &String::from_utf8_lossy(&self.get_string(&j))),
             Object::Symbol(j) => format!("{}", self.get_symbol(j)),
             Object::Pair(Pair { car, cdr }) => format!("({car}, {cdr})"),
+            Object::Function(Pair { car, cdr }) => format!("call ({car}, {cdr})"),
             Object::Builtin(f) => format!("fn {f:p}"),
         }
     }
@@ -477,7 +478,7 @@ impl StoredPtr {
     const TAG_FLOAT: u8 = 3;
     const TAG_SYMBOL: u8 = 4;
     const TAG_PAIR: u8 = 5;
-
+    const TAG_FUNCTION: u8 = 6;
     const TAG_BUILTIN: u8 = 7;
 
     fn new(idx: usize, tag: u8) -> Self {

@@ -68,7 +68,7 @@ pub fn render_store(store: &Storage, labeled_nodes: &HashMap<StoredPtr, String>)
                 Object::Builtin(fptr) => {
                     node.set_label(&format!("{{{name}|{fptr:p}}}"));
                 }
-                Object::Pair(Pair { car, cdr }) => {
+                Object::Pair(Pair { car, cdr }) | Object::Function(Pair { car, cdr }) => {
                     let label = format!(
                         "<{}>",
                         maud::html!(

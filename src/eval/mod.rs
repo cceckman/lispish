@@ -749,4 +749,21 @@ mod tests {
         let head = eval.result_ptr().unwrap();
         assert!(head.is_nil());
     }
+
+    #[test]
+    fn create_id_lambda() {
+        let mut eval = EvalEnvironment::new();
+        eval.start(
+            r#"
+        (lambda (x) i)
+        "#,
+        )
+        .unwrap();
+        eval.eval().unwrap();
+
+        match eval.result().unwrap() {
+            Object::Function(_) => (),
+            v => panic!("unexpected value: {v:?}"),
+        }
+    }
 }
