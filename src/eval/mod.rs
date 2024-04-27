@@ -48,6 +48,22 @@ impl<T> From<Error> for Result<T, Error> {
     }
 }
 
+// Helper trait to conveniently tell a user its their part.
+trait ToUserError {
+    type T;
+    fn to_user_error(self, msg: impl AsRef<str>) -> Result<Self::T, Error>;
+}
+
+impl<T, E> ToUserError for Result<T, E> {
+    type T = T;
+    fn to_user_error(self, msg: impl AsRef<str>) -> Result<T, Error> {
+        match self {
+            Ok(v) => Ok(v),
+            Err(_) => Err(Error::UserError(msg.as_ref().to_owned())),
+        }
+    }
+}
+
 enum Op {
     // Evaluate each of the expressions in the body,
     // discarding the results of all but the last after evaluation.
@@ -200,10 +216,7 @@ impl EvalEnvironment {
         }
 
         // When idle, the top-level environment is the only thing on the stack.
-        let top_env = match peek(&self.store) {
-            Ok(env) => env,
-            Err(e) => return Err(e),
-        };
+        let top_env = peek(&self.store)?;
 
         // Eval-expression calls consume their environment.
         // To ensure we don't lose the top-level environment - that we wind up with "no results" -
