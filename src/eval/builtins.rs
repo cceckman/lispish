@@ -20,6 +20,7 @@ pub const BUILTINS: &[(&str, Builtin)] = &[
     ("lambda", builtin_lambda),
     ("list", builtin_list),
     ("set!", builtin_set),
+    ("quote", builtin_quote),
     // ("sys:eq?", builtin_sys_eq),
     // ("cons", builtin_cons)
     // ("car", builtin_car)
@@ -27,7 +28,6 @@ pub const BUILTINS: &[(&str, Builtin)] = &[
     // ("if", builtin_if),
     // ("set!", builtin_set),
     // ("cond", builtin_unimplemented),
-    // ("quote", builtin_unimplemented),
     // ("apply", builtin_unimplemented),
 
     // TODO: move this to "masked builtins"
@@ -215,6 +215,25 @@ fn builtin_set(eval: &mut EvalEnvironment) -> Result<(), Error> {
     push(&eval.store, env);
     eval.op_stack.push(Op::Set);
     eval.op_stack.push(Op::EvalExpr);
+
+    Ok(())
+}
+
+// Return the single argument "quoted" - literally, without evaluation.
+fn builtin_quote(eval: &mut EvalEnvironment) -> Result<(), Error> {
+    let _env = pop(eval.store())?;
+    let tail = pop(eval.store())?;
+
+    let Pair {
+        car: expression,
+        cdr: nil_tail,
+    } = get_pair(&eval.store, tail).to_user_error("missing argument of quote")?;
+    if !nil_tail.is_nil() {
+        return Err(Error::UserError(
+            "quote expression takes a single argument".to_string(),
+        ));
+    }
+    push(eval.store(), expression);
 
     Ok(())
 }
