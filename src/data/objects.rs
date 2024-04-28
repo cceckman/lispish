@@ -34,7 +34,7 @@ impl std::fmt::Display for Ptr<'_> {
             StoredPtr::TAG_STRING => "str",
             StoredPtr::TAG_SYMBOL => "sym",
             StoredPtr::TAG_PAIR => "obj",
-
+            StoredPtr::TAG_FUNCTION => "fun",
             StoredPtr::TAG_BUILTIN => "sys",
             _ => "???",
         };
@@ -193,23 +193,23 @@ impl From<Object<'_>> for (StoredValue, u8) {
 
 impl<'a> Object<'a> {
     pub(super) fn new(p: Ptr<'a>, v: StoredValue) -> Self {
+        let bind = |raw: StoredPair| -> Pair<'a> {
+            Pair {
+                car: Ptr {
+                    raw: raw.car,
+                    store: p.store,
+                },
+                cdr: Ptr {
+                    raw: raw.cdr,
+                    store: p.store,
+                },
+            }
+        };
+
         match p.tag() {
             StoredPtr::TAG_NIL => Object::Nil,
             StoredPtr::TAG_INTEGER => Object::Integer(unsafe { v.integer }),
             StoredPtr::TAG_FLOAT => Object::Float(unsafe { v.float }),
-            StoredPtr::TAG_PAIR => Object::Pair({
-                let raw = unsafe { v.pair };
-                Pair {
-                    car: Ptr {
-                        raw: raw.car,
-                        store: p.store,
-                    },
-                    cdr: Ptr {
-                        raw: raw.cdr,
-                        store: p.store,
-                    },
-                }
-            }),
             StoredPtr::TAG_STRING => Object::String({
                 let raw = unsafe { v.string };
                 LString {
@@ -218,6 +218,8 @@ impl<'a> Object<'a> {
                 }
             }),
             StoredPtr::TAG_SYMBOL => Object::Symbol(unsafe { v.symbol }),
+            StoredPtr::TAG_PAIR => Object::Pair(bind(unsafe { v.pair })),
+            StoredPtr::TAG_FUNCTION => Object::Function(bind(unsafe { v.pair })),
             StoredPtr::TAG_BUILTIN => Object::Builtin(unsafe { v.builtin }),
             _ => panic!("invalid tag, possible data corruption"),
         }

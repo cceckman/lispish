@@ -38,6 +38,7 @@ pub fn render_store(store: &Storage, labeled_nodes: &HashMap<StoredPtr, String>)
             let obj = store.get(it);
             let (shape, newline) = match obj {
                 Object::Pair { .. } => (dot_writer::Shape::None, "<BR/>"),
+                Object::Function { .. } => (dot_writer::Shape::None, "<BR/>"),
                 _ => (dot_writer::Shape::Record, "\\n"),
             };
             node.set_shape(shape);

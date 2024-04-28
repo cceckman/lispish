@@ -101,8 +101,13 @@ enum Op {
 
     // Add a variable to the provided environment.
     // Precondition: stack is (value, symbol, environment).
-    // Postcondition: empty stack.
+    // Postcondition: symbol.
     Bind,
+
+    // Bind a list of symbols and a list of values into a target environment.
+    // Precondition: stack is (values, symbols, environment).
+    // Postcondition: stack is (environment)
+    BindArgs,
 }
 
 impl Display for Op {
@@ -119,6 +124,7 @@ impl Display for Op {
                 Op::Discard => "Discard",
                 Op::Cdr => "Cdr",
                 Op::Bind => "Bind",
+                Op::BindArgs => "BindArgs",
             }
         )
     }
@@ -368,6 +374,8 @@ impl EvalEnvironment {
                         self.op_stack.push(Op::EvalExpr);
                     }
                     // Caller should have the head of the accumulate list.
+                    // Let them pop it in the next op.
+                    // TODO: Do that here, get rid of cdr.
                     Object::Nil => (),
                     _ => return Err(Error::Fault("EvalList with non-list body".to_string())),
                 }
@@ -402,13 +410,15 @@ impl EvalEnvironment {
                 push(&self.store, cdr);
             }
             Op::EvalForm => {
-                // Stack is (applicator, tail of expr, environment).
+                // Stack is (applicator, environment, tail of expression).
                 let applicator = pop(&self.store)?;
                 // Stack is (args, environment).
                 // What do we need to do with them?
                 match self.store.get(applicator) {
                     Object::Builtin(f) => f(self)?,
-                    // TODO: Apply function
+                    Object::Function(f) => {
+                        call(&mut self.op_stack, &self.store, f)?;
+                    }
                     _ => {
                         return Err(Error::UserError(format!(
                             "object {applicator} is not applicable"
@@ -442,9 +452,115 @@ impl EvalEnvironment {
                 // value, even if it gets Discarded by a body.
                 push(&self.store, symbol);
             }
+            Op::BindArgs => {
+                let values = pop(&self.store)?;
+                let symbols = pop(&self.store)?;
+                // Note: Leaving the environment on the stack, it's also our return value.
+                let environment = peek(&self.store)?;
+
+                let Pair {
+                    car: sym,
+                    cdr: next_symbols,
+                } = get_pair(&self.store, symbols)?;
+
+                // Check for the special-case: is there a "rest" argument?
+                if sym == self.store.put_symbol(".") {
+                    // Bind "values" to the next, final argument.
+                    let Pair {
+                        car: rest,
+                        cdr: after_rest,
+                    } = get_pair(&self.store, symbols)?;
+                    if !rest.is_symbol() {
+                        return Err(Error::UserError(format!(
+                            "{} is not an acceptable rest parameter",
+                            self.store.display(self.store.get(rest))
+                        )));
+                    }
+                    if !after_rest.is_nil() {
+                        return Err(Error::UserError(format!(
+                            "{} cannot be used after rest parameter",
+                            self.store.display(self.store.get(rest))
+                        )));
+                    }
+                    // OK, have sane arguments. Bind once:
+                    push(&self.store, environment);
+                    push(&self.store, rest);
+                    push(&self.store, values);
+                } else {
+                    let Pair {
+                        car: value,
+                        cdr: next_values,
+                    } = get_pair(&self.store, values).to_user_error("not enough parameters")?;
+                    if !next_symbols.is_nil() {
+                        // Prepare the next BindArgs.
+                        // Environment is already on the stack:
+                        push(&self.store, next_symbols);
+                        push(&self.store, next_values);
+                        self.op_stack.push(Op::BindArgs);
+                    }
+                    // Prepare Bind.
+                    push(&self.store, environment);
+                    push(&self.store, sym);
+                    push(&self.store, value);
+                }
+                // Bind leaves the symbol on the stack, which isn't necessary for args.
+                // Discard the symbol after binding.
+                self.op_stack.push(Op::Discard);
+                self.op_stack.push(Op::Bind);
+            }
         }
         Ok(Poll::Pending)
     }
+}
+
+fn call(ops: &mut Vec<Op>, store: &Storage, function: Pair) -> Result<(), Error> {
+    let arg_env = pop(store)?;
+    let args = pop(store)?;
+    // Deconstruct the function into its components:
+    let Pair {
+        car: lex_env,
+        cdr: fn_tail,
+    } = function;
+    let Pair {
+        car: parameters,
+        cdr: body,
+    } = get_pair(store, fn_tail)?;
+
+    // The last thing we do is evaluate the body in the "eval" environment.
+    ops.push(Op::EvalBody);
+    push(&store, body);
+    let new_env = store.put(Pair::cons(Ptr::nil(), lex_env));
+    push(&store, new_env);
+    // Before that, we need to fill the "eval" environment.
+    // It's already in the right place on the stack, and will be conserved;
+    // push the op and the symbols:
+    ops.push(Op::BindArgs);
+    push(store, parameters);
+
+    // But we need to evaluate the list.
+    // That's relatively complicated, so use the helper:
+    eval_list(ops, store, args, arg_env)
+}
+
+/// Evaluate each item in the list, using the provided environment.
+fn eval_list(ops: &mut Vec<Op>, store: &Storage, list: Ptr, env: Ptr) -> Result<(), Error> {
+    // Create a "nil head" to accumulate into.
+    // This will be our result later, after a Cdr op:
+    let nil_head = store.put(Pair::cons(Ptr::nil(), Ptr::nil()));
+    push(store, nil_head);
+
+    // We need to evaluate each list item:
+    push(store, list);
+    push(store, env);
+    // Note that here, nil_head is the list _tail_;
+    // above, it's the list _head_.
+    push(store, nil_head);
+
+    // Push the ops in reverse order - "cleanup" then "eval":
+    ops.push(Op::Cdr);
+    ops.push(Op::EvalList);
+
+    Ok(())
 }
 
 /// Retrieve the pointer as a pair, or return a program error.
@@ -763,6 +879,37 @@ mod tests {
 
         match eval.result().unwrap() {
             Object::Function(_) => (),
+            v => panic!("unexpected value: {v:?}"),
+        }
+    }
+
+    #[test]
+    fn apply_id() {
+        let mut eval = EvalEnvironment::new();
+        eval.start(
+            r#"
+        (define id (lambda (x) x))
+        (id 7)
+        "#,
+        )
+        .unwrap();
+        eval.eval().unwrap();
+
+        match eval.result().unwrap() {
+            Object::Integer(7) => (),
+            v => panic!("unexpected value: {v:?}"),
+        }
+    }
+    #[test]
+    fn apply_id_split() {
+        let mut eval = EvalEnvironment::new();
+        eval.start("(define id (lambda (x) x))").unwrap();
+        eval.eval().unwrap();
+        eval.start("(id 7)").unwrap();
+        eval.eval().unwrap();
+
+        match eval.result().unwrap() {
+            Object::Integer(7) => (),
             v => panic!("unexpected value: {v:?}"),
         }
     }
