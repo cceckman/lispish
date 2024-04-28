@@ -19,10 +19,11 @@ pub const BUILTINS: &[(&str, Builtin)] = &[
     ("begin", builtin_begin),
     ("lambda", builtin_lambda),
     ("list", builtin_list),
+    ("set!", builtin_set),
+    // ("sys:eq?", builtin_sys_eq),
     // ("cons", builtin_cons)
     // ("car", builtin_car)
     // ("cdr", builtin_cdr)
-    // ("eq?", builtin_eq)
     // ("if", builtin_if),
     // ("set!", builtin_set),
     // ("cond", builtin_unimplemented),
@@ -174,5 +175,46 @@ fn builtin_lambda(eval: &mut EvalEnvironment) -> Result<(), Error> {
     // Function object re-uses the tail: (environment, parameters, body...)
     let obj = eval.store.put(Object::Function(Pair::cons(env, tail)));
     push(&eval.store, obj);
+    Ok(())
+}
+
+// Set a variable to a value.
+fn builtin_set(eval: &mut EvalEnvironment) -> Result<(), Error> {
+    let env = pop(eval.store())?;
+    let tail = pop(eval.store())?;
+
+    // Deconstruct the tail to get structure
+    let Pair {
+        car: symbol,
+        cdr: tail,
+    } = get_pair(&eval.store, tail).to_user_error("missing symbol of set!")?;
+    // We don't allow set! to take an expression - just a symbol.
+    if !symbol.is_symbol() {
+        return Err(Error::UserError(
+            "set! argument is not a variable name".to_string(),
+        ));
+    }
+    // Evaluate then bind-in-place.
+    // Bind-in-place structure:
+    push(&eval.store, env);
+    push(&eval.store, symbol);
+    // But we need to evaluate the expression.
+    // set! doesn't take a _body_, just an _expression_, but what we have is the tail;
+    // we need to put just the expression there.
+    let Pair {
+        car: expression,
+        cdr: nil_tail,
+    } = get_pair(&eval.store, tail).to_user_error("missing value of set!")?;
+    if !nil_tail.is_nil() {
+        return Err(Error::UserError(
+            "set! expression takes a single value, not a body".to_string(),
+        ));
+    }
+
+    push(&eval.store, expression);
+    push(&eval.store, env);
+    eval.op_stack.push(Op::Set);
+    eval.op_stack.push(Op::EvalExpr);
+
     Ok(())
 }

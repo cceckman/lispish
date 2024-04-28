@@ -107,6 +107,11 @@ enum Op {
     // Postcondition: symbol.
     Bind,
 
+    // Replace a variable to the provided environment.
+    // Precondition: stack is (value, symbol, environment).
+    // Postcondition: symbol.
+    Set,
+
     // Bind a list of symbols and a list of values into a target environment.
     // Precondition: stack is (values, symbols, environment).
     // Postcondition: stack is (environment)
@@ -127,6 +132,7 @@ impl Display for Op {
                 Op::Discard => "Discard",
                 Op::Cdr => "Cdr",
                 Op::Bind => "Bind",
+                Op::Set => "Set",
                 Op::BindArgs => "BindArgs",
             }
         )
@@ -176,17 +182,20 @@ impl EvalEnvironment {
 
         // When idle, we only have the op-level environment stack.
         push(&store, base_env);
-        EvalEnvironment {
+        let mut env = EvalEnvironment {
             op_stack: Vec::new(),
             store,
-        }
+        };
+
+        // TODO: Fill the top-level environment with the stdlib definitions as well.
+        env
     }
 
     /// Start evaluating a new expression.
     ///
     /// This clears any state from any previous evaluations, effectivly cancelling them.
     /// Returns an error if the expression does not parse.
-    pub fn start(&mut self, body: &str) -> Result<(), Error> {
+    pub fn start(&mut self, body: &str) -> Result<&mut Self, Error> {
         // To clean up an evaluation,
         // 1. Clear any operands:
         self.op_stack.clear();
@@ -243,7 +252,7 @@ impl EvalEnvironment {
         // We'll execute by evalling the body.
         self.op_stack.push(Op::EvalBody);
 
-        Ok(())
+        Ok(self)
     }
 
     pub fn store(&self) -> &Storage {
@@ -452,6 +461,23 @@ impl EvalEnvironment {
                 self.store
                     .update(environment, Pair::cons(new_frame, next_frame));
                 // TODO: We're treating define as an expression; that means it has to return a
+                // value, even if it gets Discarded by a body.
+                push(&self.store, symbol);
+            }
+            Op::Set => {
+                let value = pop(&self.store)?;
+                let symbol = pop(&self.store)?;
+                let environment = pop(&self.store)?;
+                assert!(symbol.is_symbol());
+                assert!(environment.is_pair());
+
+                let loc = get_location(&self.store, symbol, environment).to_user_error(format!(
+                    "no existing binding for symbol {}",
+                    self.store.display(self.store.get(symbol))
+                ))?;
+                // Update the binding in-place in the environment.
+                self.store.update(loc, Pair::cons(symbol, value));
+                // TODO: We're treating define / set / bind as an expression; that means it has to return a
                 // value, even if it gets Discarded by a body.
                 push(&self.store, symbol);
             }
