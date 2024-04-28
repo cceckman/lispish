@@ -18,6 +18,9 @@ mod builtins;
 #[cfg(feature = "web")]
 mod render_eval;
 
+#[cfg(test)]
+mod stdlib_test;
+
 /// Result from a single-step:
 /// - An error
 /// - Execution is not complete
@@ -270,9 +273,9 @@ impl EvalEnvironment {
     }
 
     /// Evaluate until evaluation is complete, or an error is encountered.
-    pub fn eval(&mut self) -> Result<(), Error> {
+    pub fn eval(&mut self) -> Result<Object, Error> {
         while self.step()?.is_pending() {}
-        Ok(())
+        self.result()
     }
 
     /// Step forward: perform a single eval operation.
@@ -646,15 +649,14 @@ pub type Builtin = fn(&mut EvalEnvironment) -> Result<(), Error>;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::{Object, Pair, Ptr};
+    use crate::data::Object;
 
     #[test]
     fn int_eval() {
         let mut eval = EvalEnvironment::new();
         eval.start("1 2 3").unwrap();
-        eval.eval().unwrap();
 
-        match eval.result().unwrap() {
+        match eval.eval().unwrap() {
             Object::Integer(3) => (),
             v => panic!("unexpected result: {v:?}"),
         };
@@ -691,9 +693,8 @@ mod tests {
     fn eval_nil() {
         let mut eval = EvalEnvironment::new();
         eval.start(r#"()"#).unwrap();
-        eval.eval().unwrap();
 
-        match eval.result().unwrap() {
+        match eval.eval().unwrap() {
             Object::Nil => (),
             v => panic!("unexpected result: {v:?}"),
         };
@@ -711,206 +712,18 @@ mod tests {
     }
 
     #[test]
-    fn symbol_eval() {
-        // TODO: This is a hack for testing.
-        let mut eval = EvalEnvironment::new();
-        eval.start(r#"(one)"#).unwrap();
-        eval.eval().unwrap();
-
-        match eval.result().unwrap() {
-            Object::Integer(1) => (),
-            v => panic!("unexpected result: {v:?}"),
-        };
-    }
-
-    #[test]
-    fn define_int_value_and_retrieve() {
-        // TODO: This is a hack for testing.
-        let mut eval = EvalEnvironment::new();
-        eval.start(
-            r#"
-        (define a 7)
-        (define b a)
-        b
-        "#,
-        )
-        .unwrap();
-        eval.eval().unwrap();
-
-        match eval.result().unwrap() {
-            Object::Integer(7) => (),
-            v => panic!("unexpected result: {v:?}"),
-        };
-    }
-
-    #[test]
     fn restart() {
         let mut eval = EvalEnvironment::new();
         eval.start("1 2 3").unwrap();
-        eval.eval().unwrap();
-        match eval.result().unwrap() {
+        match eval.eval().unwrap() {
             Object::Integer(3) => (),
             v => panic!("unexpected result: {v:?}"),
         };
 
         eval.start("2 3 4").unwrap();
-        eval.eval().unwrap();
-        match eval.result().unwrap() {
+        match eval.eval().unwrap() {
             Object::Integer(4) => (),
             v => panic!("unexpected result: {v:?}"),
         };
-    }
-
-    #[test]
-    fn begin() {
-        let mut eval = EvalEnvironment::new();
-        eval.start(
-            r#"
-        (define a (begin 1 2 3 4))
-        a
-        "#,
-        )
-        .unwrap();
-        eval.eval().unwrap();
-
-        match eval.result().unwrap() {
-            Object::Integer(4) => (),
-            v => panic!("unexpected result: {v:?}"),
-        };
-    }
-
-    #[test]
-    fn define_requires_symbol() {
-        let mut eval = EvalEnvironment::new();
-        eval.start(
-            r#"
-        (define 1 39)
-        a
-        "#,
-        )
-        .unwrap();
-        match eval.eval() {
-            Err(Error::UserError(_)) => (),
-            v => panic!("unexpected eval result: {:?}", v),
-        };
-    }
-
-    #[test]
-    fn define_requires_body() {
-        let mut eval = EvalEnvironment::new();
-        eval.start(
-            r#"
-        (define a)
-        a
-        "#,
-        )
-        .unwrap();
-        match eval.eval() {
-            Err(Error::UserError(_)) => (),
-            v => panic!("unexpected eval result: {:?}", v),
-        };
-    }
-
-    #[test]
-    fn define_body_is_expression() {
-        let mut eval = EvalEnvironment::new();
-        eval.start(
-            r#"
-        (define a 1 2 3)
-        a
-        "#,
-        )
-        .unwrap();
-        match eval.eval() {
-            Err(Error::UserError(_)) => (),
-            v => panic!("unexpected eval result: {:?}", v),
-        };
-    }
-
-    #[test]
-    fn nonempty_list() {
-        let mut eval = EvalEnvironment::new();
-        eval.start(
-            r#"
-        (list 1 2 3)
-        "#,
-        )
-        .unwrap();
-        eval.eval().unwrap();
-        let mut head = eval.result_ptr().unwrap();
-        for value in [1, 2, 3] {
-            let pt: Ptr;
-            Pair { car: pt, cdr: head } = get_pair(eval.store(), head).unwrap();
-            match eval.store().get(pt) {
-                Object::Integer(v) => assert_eq!(v, value),
-                v => panic!(
-                    "unexpected object: wanted integer {}, got {}",
-                    value,
-                    eval.store().display(v)
-                ),
-            }
-        }
-    }
-
-    #[test]
-    fn empty_list() {
-        let mut eval = EvalEnvironment::new();
-        eval.start(
-            r#"
-        (list)
-        "#,
-        )
-        .unwrap();
-        eval.eval().unwrap();
-        let head = eval.result_ptr().unwrap();
-        assert!(head.is_nil());
-    }
-
-    #[test]
-    fn create_id_lambda() {
-        let mut eval = EvalEnvironment::new();
-        eval.start(
-            r#"
-        (lambda (x) i)
-        "#,
-        )
-        .unwrap();
-        eval.eval().unwrap();
-
-        match eval.result().unwrap() {
-            Object::Function(_) => (),
-            v => panic!("unexpected value: {v:?}"),
-        }
-    }
-
-    #[test]
-    fn apply_id() {
-        let mut eval = EvalEnvironment::new();
-        eval.start(
-            r#"
-        (define id (lambda (x) x))
-        (id 7)
-        "#,
-        )
-        .unwrap();
-        eval.eval().unwrap();
-
-        match eval.result().unwrap() {
-            Object::Integer(7) => (),
-            v => panic!("unexpected value: {v:?}"),
-        }
-    }
-    #[test]
-    fn apply_id_split() {
-        let mut eval = EvalEnvironment::new();
-        eval.start("(define id (lambda (x) x))").unwrap();
-        eval.eval().unwrap();
-        eval.start("(id 7)").unwrap();
-        eval.eval().unwrap();
-
-        match eval.result().unwrap() {
-            Object::Integer(7) => (),
-            v => panic!("unexpected value: {v:?}"),
-        }
     }
 }
