@@ -262,3 +262,36 @@ fn booleans() -> Result<(), Error> {
 
     Ok(())
 }
+
+#[test]
+fn eq() -> Result<(), Error> {
+    let mut eval = EvalEnvironment::new();
+
+    for (expr, expect) in [
+        ("(eq? () ())", true),
+        ("(eq? 1 2)", false),
+        ("(eq? (quote a) (quote b))", false),
+        ("(eq? (quote a) (quote a))", true),
+        ("(eq? (list 1 2) (list 1 2))", false),
+        ("(eq? 1.3 1.1)", false),
+        ("(eq? 1.0 1.0)", false),
+        ("(eq? (lambda (x) x) (lambda (x) x))", false),
+        ("(define id (lambda (x) x)) (eq? id id)", true),
+        (
+            "(define id1 (lambda (x) x)) (define id2 (lambda (x) x)) (eq? id1 id2)",
+            false,
+        ),
+        (r#"(eq? "hello" "hello")"#, false),
+    ] {
+        eval.start(expr)?.eval()?;
+        let got = eval.result_ptr()?;
+        let want = eval.store().put_symbol(if expect { "#t" } else { "#f" });
+        assert_eq!(
+            got, want,
+            "unexpected result from {}: got: {} want: {}",
+            expr, got, want
+        );
+    }
+
+    Ok(())
+}
