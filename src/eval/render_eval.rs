@@ -37,17 +37,18 @@ impl EvalEnvironment {
         .map_err(|e| Error::Fault(format!("error in rendering stack: {e}")))?;
 
         Ok(maud::html!(
-            div class="eval" {
-                div {
+            div class="ops" {
                 h3 { "Op Stack" }
                 table class="stack" {
                     @for op in self.op_stack.iter().rev() {
                         tr { td { (op) } }
                     }
                     tr { td; }
-                }}
-                div class="heap" {
-                    h3 { "Storage" }
+                }
+            }
+            div class="heap" {
+                h3 { "Storage" }
+                div class="heap-display" {
                     (maud::PreEscaped(graph_svg))
                 }
             }

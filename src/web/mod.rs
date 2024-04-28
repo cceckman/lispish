@@ -94,7 +94,6 @@ impl Session {
                             div {
                                 h3 { "Expressions" }
                                 form method="post" {
-
                                     table class="history" {
                                         @for history in self.history.iter() {
                                             tr class="historyline" {
@@ -123,7 +122,7 @@ impl Session {
                                     }
                                 }
                             }
-                            div class="state" { (state) }
+                            (state)
                         }
                     }
                 }

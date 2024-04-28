@@ -19,13 +19,6 @@ div.historyline {
 	flex-direction: row;
 }
 
-div.eval{
-	display: flex;
-	flex-direction: row;
-	width: 100%;
-	height: 100%;
-}
-
 .stack {
 	min-width: 10em;
 	border: 1px solid black;
@@ -39,6 +32,18 @@ div.eval{
 .result {
 	min-width: 10em;
 	font-family: monospace;
+}
+
+.heap{
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+	height: 100%;
+	overflow: hidden;
+}
+
+.heap-display{
+	overflow: scroll;
 }
 
 table {
