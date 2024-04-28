@@ -335,7 +335,7 @@ fn gc_internal(
         live_objects.set(old_idx);
 
         let got = last_gen.get(old_ptr);
-        if let Some(p) = got.as_pair(old_ptr) {
+        if let Some(p) = got.recursable(old_ptr) {
             for rp in [p.car, p.cdr] {
                 // Skip over nil (always 0) and symbols (different indices,
                 // perpetual).
@@ -397,9 +397,8 @@ fn gc_internal(
         live_objects.clear(old_ptr.idx());
 
         let new_ptr = last_gen.get_next(old_ptr);
-        if old_ptr.is_pair() {
-            // This is a pair; we need to update its inner pointers, in the new arena.
-            let pair = unsafe { &mut next_gen.objects[new_ptr.idx()].pair };
+        if let Some(mut pair) = next_gen.get(new_ptr).recursable(new_ptr) {
+            // This is a pair/function we need to update its inner pointers, in the new arena.
             // This object still contains the old pointers, because we haven't visited this node on this pass.
             // Put the old pointers in the queue, and update the new location.
             for rp in [&mut pair.car, &mut pair.cdr] {
@@ -409,6 +408,7 @@ fn gc_internal(
                 }
                 *rp = new_ptr;
             }
+            next_gen.objects[new_ptr.idx()].pair = pair;
         }
         if old_ptr.is_string() {
             // Copy the string to the new string buffer.
@@ -441,8 +441,8 @@ union StoredValue {
 }
 
 impl StoredValue {
-    fn as_pair(&self, ptr: StoredPtr) -> Option<StoredPair> {
-        if ptr.is_pair() {
+    fn recursable(&self, ptr: StoredPtr) -> Option<StoredPair> {
+        if ptr.is_pair() || ptr.is_function() {
             Some(unsafe { self.pair })
         } else {
             None
@@ -522,6 +522,11 @@ impl StoredPtr {
     fn is_pair(&self) -> bool {
         self.tag() == StoredPtr::TAG_PAIR
     }
+    #[inline]
+    fn is_function(&self) -> bool {
+        self.tag() == StoredPtr::TAG_FUNCTION
+    }
+
     #[inline]
     fn is_builtin(&self) -> bool {
         self.tag() == StoredPtr::TAG_BUILTIN

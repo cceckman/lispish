@@ -1,6 +1,8 @@
-use crate::eval::{get_pair, pop, push, Builtin, Error, EvalEnvironment, Op, ToUserError};
+use crate::eval::{
+    eval_list, get_pair, pop, push, Builtin, Error, EvalEnvironment, Object, Op, ToUserError,
+};
 
-use crate::data::{Pair, Ptr};
+use crate::data::{Pair, Ptr, Storage};
 
 pub const MASKED_BUILTINS: &[(&str, Builtin)] = &[("builtin:add", builtin_unimplemented)];
 
@@ -108,25 +110,7 @@ fn builtin_list(eval: &mut EvalEnvironment) -> Result<(), Error> {
     // But we have to evaluate each of them in turn.
     let env = pop(&eval.store)?;
     let body = pop(&eval.store)?;
-
-    // Create a "nil head" to accumulate into.
-    // This will be our result later, after a Cdr op:
-    let nil_head = eval.store.put(Pair::cons(Ptr::nil(), Ptr::nil()));
-    push(&eval.store, nil_head);
-
-    // We'll need to evaluate the list, though:
-    push(&eval.store, body);
-    push(&eval.store, env);
-    // Note that here, nil_head is the list _tail_;
-    // above, it's the list _head_.
-    push(&eval.store, nil_head);
-
-    // Once the eval-list is done, we'll want to get the "real" list head:
-    eval.op_stack.push(Op::Cdr);
-    // But first, eval-list:
-    eval.op_stack.push(Op::EvalList);
-
-    Ok(())
+    eval_list(&mut eval.op_stack, &eval.store, body, env)
 }
 
 fn builtin_lambda(eval: &mut EvalEnvironment) -> Result<(), Error> {
@@ -134,11 +118,31 @@ fn builtin_lambda(eval: &mut EvalEnvironment) -> Result<(), Error> {
     let env = pop(&eval.store)?;
     let tail = pop(&eval.store)?;
 
-    // Deconstruct the tail further:
-    let Pair {
-        car: parameters,
-        cdr: body,
-    } = get_pair(&eval.store, tail).to_user_error()?;
+    // Deconstruct the tail further, to check structure:
+    {
+        let Pair {
+            car: parameters,
+            cdr: body,
+        } = get_pair(&eval.store, tail).to_user_error("missing parameters in lambda")?;
+        let mut parameters = parameters;
+        while !parameters.is_nil() {
+            let Pair { car, cdr } = get_pair(&eval.store, parameters)?;
+            if !car.is_symbol() {
+                return Err(Error::UserError(
+                    "parameter list must only be symbols".to_string(),
+                ));
+            }
+            parameters = cdr;
+        }
+        if body.is_nil() {
+            return Err(Error::UserError(
+                "lambda must have a nonempty body".to_string(),
+            ));
+        }
+    }
 
-    todo!()
+    // Function object re-uses the tail: (environment, parameters, body...)
+    let obj = eval.store.put(Object::Function(Pair::cons(env, tail)));
+    push(&eval.store, obj);
+    Ok(())
 }
