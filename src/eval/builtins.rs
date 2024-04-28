@@ -1,12 +1,13 @@
 use crate::eval::{
-    eval_list, get_pair, pop, push, Builtin, Error, EvalEnvironment, Object, Op, ToUserError,
+    eval_list, get_pair, get_value, pop, push, Builtin, Error, EvalEnvironment, Object, Op,
+    ToUserError,
 };
 
 use crate::data::{Pair, Ptr};
 
 /// The standard library of functions.
 /// This gets loaded during environment initialization.
-const STDLIB: &[u8] = include_bytes!("stdlib.scm");
+pub const STDLIB: &str = include_str!("stdlib.scm");
 
 /// These could also be called "keywords".
 /// We evaluate them by first selecting "is this thing a function or a builtin",
@@ -21,12 +22,11 @@ pub const BUILTINS: &[(&str, Builtin)] = &[
     ("list", builtin_list),
     ("set!", builtin_set),
     ("quote", builtin_quote),
-    // ("sys:eq?", builtin_sys_eq),
-    // ("cons", builtin_cons)
+    ("sys:eq?", builtin_sys_eq),
+    // ("if", builtin_if),
     // ("car", builtin_car)
     // ("cdr", builtin_cdr)
-    // ("if", builtin_if),
-    // ("set!", builtin_set),
+    // ("cons", builtin_cons)
     // ("cond", builtin_unimplemented),
     // ("apply", builtin_unimplemented),
 
@@ -235,5 +235,34 @@ fn builtin_quote(eval: &mut EvalEnvironment) -> Result<(), Error> {
     }
     push(eval.store(), expression);
 
+    Ok(())
+}
+
+// Return true/false based on the (two) arguments' pointer equality.
+// Since this is a builtin, the "arguments" are the symbols bound by the lambda;
+// we need to look them up.
+fn builtin_sys_eq(eval: &mut EvalEnvironment) -> Result<(), Error> {
+    let env = pop(eval.store())?;
+    let tail = pop(eval.store())?;
+
+    let Pair {
+        car: a_sym,
+        cdr: tail,
+    } = get_pair(&eval.store, tail)?;
+    let Pair {
+        car: b_sym,
+        cdr: nil_tail,
+    } = get_pair(&eval.store, tail)?;
+    assert!(nil_tail.is_nil());
+
+    let a = get_value(eval.store(), a_sym, env)?;
+    let b = get_value(eval.store(), b_sym, env)?;
+
+    let symbol = if a == b {
+        eval.store().put_symbol("#t")
+    } else {
+        eval.store().put_symbol("#f")
+    };
+    push(eval.store(), symbol);
     Ok(())
 }
