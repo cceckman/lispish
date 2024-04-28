@@ -2,9 +2,11 @@ use crate::eval::{
     eval_list, get_pair, pop, push, Builtin, Error, EvalEnvironment, Object, Op, ToUserError,
 };
 
-use crate::data::{Pair, Ptr, Storage};
+use crate::data::{Pair, Ptr};
 
-pub const MASKED_BUILTINS: &[(&str, Builtin)] = &[("builtin:add", builtin_unimplemented)];
+/// The standard library of functions.
+/// This gets loaded during environment initialization.
+const STDLIB: &[u8] = include_bytes!("stdlib.scm");
 
 /// These could also be called "keywords".
 /// We evaluate them by first selecting "is this thing a function or a builtin",
@@ -17,23 +19,51 @@ pub const BUILTINS: &[(&str, Builtin)] = &[
     ("begin", builtin_begin),
     ("lambda", builtin_lambda),
     ("list", builtin_list),
-    // ("if", builtin_unimplemented),
+    // ("cons", builtin_cons)
+    // ("car", builtin_car)
+    // ("cdr", builtin_cdr)
+    // ("eq?", builtin_eq)
+    // ("if", builtin_if),
+    // ("set!", builtin_set),
     // ("cond", builtin_unimplemented),
     // ("quote", builtin_unimplemented),
     // ("apply", builtin_unimplemented),
-    // TODO: This is "just" for testing.
-    ("one", builtin_one),
+
+    // TODO: move this to "masked builtins"
+    // These act as system functions to back standard-library functions.
+    // sys:add is the function of two variables that backs the "+" operator.
+    ("sys:add", builtin_add),
 ];
 
-fn builtin_unimplemented(_eval: &mut EvalEnvironment) -> Result<(), Error> {
-    Error::Fault("haven't implemented this builtin".to_string()).into()
-}
-
-/// The `one` builtin: evaluate to 1.
-fn builtin_one(eval: &mut EvalEnvironment) -> Result<(), Error> {
+// A two-argument system function backing the "+" operator.
+// A nice thing about this: we can assume the arguments
+// have already been evaluated.
+fn builtin_add(eval: &mut EvalEnvironment) -> Result<(), Error> {
     let _env = pop(eval.store())?;
-    let _args = pop(eval.store())?;
-    push(eval.store(), eval.store().put(1i64));
+    let args = pop(eval.store())?;
+
+    let Pair { car: a, cdr: next } =
+        get_pair(eval.store(), args).to_user_error("missing argument to +")?;
+    let Pair { car: b, .. } =
+        get_pair(eval.store(), next).to_user_error("missing argument to +")?;
+
+    let result = match (eval.store().get(a), eval.store.get(b)) {
+        (Object::Integer(a), Object::Integer(b)) => eval.store.put(a + b),
+        (Object::Float(a), Object::Float(b)) => eval.store.put(a + b),
+        (Object::String(a), Object::String(b)) => {
+            let a = eval.store().get_string(&a);
+            let b = eval.store().get_string(&b);
+            let new: Vec<u8> = a.iter().cloned().chain(b.iter().cloned()).collect();
+            eval.store().put_string(&new)
+        }
+        _ => {
+            return Err(Error::UserError(format!(
+                "incompatible arguments: {a} + {b} has mismatched types"
+            )))
+        }
+    };
+
+    push(eval.store(), result);
     Ok(())
 }
 
