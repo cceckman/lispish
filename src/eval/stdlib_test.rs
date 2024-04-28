@@ -220,6 +220,28 @@ fn set() -> Result<(), Error> {
     }
 }
 
+#[test]
+fn quote() -> Result<(), Error> {
+    let mut eval = EvalEnvironment::new();
+    eval.start("(quote unknown-symbol)")?.eval()?;
+    let got = eval.result_ptr()?;
+    let want = eval.store().put_symbol("unknown-symbol");
+    assert_eq!(got, want);
+    Ok(())
+}
+
+#[test]
+fn quote_requires_arg() -> Result<(), Error> {
+    let mut eval = EvalEnvironment::new();
+    eval.start("(quote)")?
+        .eval()
+        .expect_err("quote requires an argument");
+    eval.start("(quote 1 2)")?
+        .eval()
+        .expect_err("quote requires exactly one argument");
+    Ok(())
+}
+
 // #[test]
 // fn booleans() -> Result<(), Error> {
 //     let mut eval = EvalEnvironment::new();
