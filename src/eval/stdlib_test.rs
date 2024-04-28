@@ -242,13 +242,23 @@ fn quote_requires_arg() -> Result<(), Error> {
     Ok(())
 }
 
-// #[test]
-// fn booleans() -> Result<(), Error> {
-//     let mut eval = EvalEnvironment::new();
-//     eval.start("(eq? #t (quote #t))")?.eval()?;
-//     let t = eval.result_ptr()?;
-//     let hash_t = eval.store().put_symbol("#t");
-//     assert_eq!(t, hash_t);
-//
-//     Ok(())
-// }
+#[test]
+fn booleans() -> Result<(), Error> {
+    let mut eval = EvalEnvironment::new();
+    eval.start("(eq? #t (quote #t))")?.eval()?;
+    let t = eval.result_ptr()?;
+    let hash_t = eval.store().put_symbol("#t");
+    assert_eq!(t, hash_t);
+
+    eval.start("(eq? #f (quote #f))")?.eval()?;
+    let t = eval.result_ptr()?;
+    let hash_t = eval.store().put_symbol("#t");
+    assert_eq!(t, hash_t);
+
+    eval.start("(eq? #f (quote #t))")?.eval()?;
+    let f = eval.result_ptr()?;
+    let hash_f = eval.store().put_symbol("#f");
+    assert_eq!(f, hash_f);
+
+    Ok(())
+}

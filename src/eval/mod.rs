@@ -13,6 +13,8 @@ use crate::{
 };
 use core::task::Poll;
 use std::fmt::Display;
+
+use self::builtins::STDLIB;
 mod builtins;
 
 #[cfg(feature = "web")]
@@ -187,7 +189,15 @@ impl EvalEnvironment {
             store,
         };
 
-        // TODO: Fill the top-level environment with the stdlib definitions as well.
+        // TODO: Split into multiple environments-
+        // - the top-level (user) environment,
+        // - the builtin/stdlib envionment,
+        // - the system/masked environment (which stdlib may capture but not extend)
+        env.start(STDLIB)
+            .expect("stdlib does not parse")
+            .eval()
+            .expect("stdlib execution should always succeed");
+
         env
     }
 
@@ -340,10 +350,8 @@ impl EvalEnvironment {
                 match self.store.get(expr) {
                     Object::Symbol(_) => {
                         // Walk the environment tree to find the location.
-                        let loc = get_location(&self.store, expr, env)?;
-                        // In this case, what we want is the stored value.
-                        let pair = get_pair(&self.store, loc)?;
-                        push(&self.store, pair.cdr);
+                        let v = get_value(&self.store, expr, env)?;
+                        push(&self.store, v);
                     }
                     Object::Pair(Pair { car, cdr }) => {
                         // Prepare "apply the form":
@@ -635,6 +643,16 @@ fn get_location<'a>(
         "could not resolve symbol: {}",
         store.get_symbol_ptr(symbol)
     )))
+}
+
+/// Get the value of a symbol.
+fn get_value<'a>(
+    store: &'a Storage,
+    symbol: Ptr<'a>,
+    environment: Ptr<'a>,
+) -> Result<Ptr<'a>, Error> {
+    let Pair { cdr: value, .. } = get_pair(store, get_location(store, symbol, environment)?)?;
+    Ok(value)
 }
 
 fn push(store: &Storage, p: Ptr) {

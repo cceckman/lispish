@@ -1,8 +1,9 @@
 ; TODO: The general procedure alows multiple args,
 ; but that would lead to mutual recursion with foldl.
 ; Don't do that for now, until we have foldl working.
-; (define eq? (lambda (a b) (sys:eq? a b)))
+(define eq? (lambda (a b) (sys:eq? a b)))
 
+(define nil ())
 (define #t nil)
 (define #f nil)
 (set! #t (quote #t))
