@@ -1,6 +1,7 @@
 use std::{marker::PhantomData, ops::Range};
 
 use crate::eval::Builtin;
+use string_interner::{DefaultSymbol, Symbol as InternerSymbol};
 
 use super::{Bind, Storage, StoredPair, StoredPtr, StoredString, StoredValue};
 
@@ -194,8 +195,8 @@ impl<'a> TryInto<Pair<'a>> for Object<'a> {
 impl From<Object<'_>> for (StoredValue, u8) {
     fn from(object: Object<'_>) -> Self {
         match object {
-            Object::Nil => (StoredValue { tombstone: 0 }, object.tag()),
-            Object::Symbol(s) => (StoredValue { symbol: s }, object.tag()),
+            Object::Nil => unreachable!("Do not serialize nil"),
+            Object::Symbol(_) => unreachable!("Symbols are interned, not stored"),
             Object::Integer(i) => (StoredValue { integer: i }, object.tag()),
             Object::Float(f) => (StoredValue { float: f }, object.tag()),
             Object::String(s) => (StoredValue { string: s.raw }, object.tag()),
@@ -248,7 +249,9 @@ impl<'a> Object<'a> {
                     store: p.store,
                 }
             }),
-            StoredPtr::TAG_SYMBOL => Object::Symbol(unsafe { v.symbol }),
+            StoredPtr::TAG_SYMBOL => {
+                Object::Symbol(Symbol(DefaultSymbol::try_from_usize(p.idx()).unwrap()))
+            }
             StoredPtr::TAG_PAIR => Object::Pair(bind(unsafe { v.pair })),
             StoredPtr::TAG_FUNCTION => Object::Function(bind(unsafe { v.pair })),
             StoredPtr::TAG_BUILTIN => Object::Builtin(unsafe { v.builtin }),
@@ -282,9 +285,7 @@ impl<'a> Pair<'a> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Symbol {
-    pub(super) symbol: string_interner::DefaultSymbol,
-}
+pub struct Symbol(pub DefaultSymbol);
 
 #[derive(Debug, Clone, Copy)]
 pub struct LString<'a> {

@@ -105,6 +105,17 @@ pub struct StorageStats {
     pub symbols: usize,
 }
 
+impl StorageStats {
+    fn max(&self, other: &StorageStats) -> StorageStats {
+        StorageStats {
+            // Update stats before compaction:
+            objects: max(self.objects, other.objects),
+            string_data: max(self.string_data, other.string_data),
+            symbols: max(self.symbols, other.symbols),
+        }
+    }
+}
+
 impl Generation {
     /// Stores the Lisp object in storage.
     fn put_object(&mut self, object: Object) -> StoredPtr {
@@ -173,7 +184,7 @@ impl Storage {
         }
     }
     pub fn max_stats(&self) -> StorageStats {
-        self.high_water
+        self.current_stats().max(&self.high_water)
     }
 
     /// Add a symbol to the symbol table.
@@ -189,7 +200,7 @@ impl Storage {
     pub fn get_symbol(&self, idx: Symbol) -> Ref<'_, str> {
         let symtab = self.symbols.borrow();
         Ref::map(symtab, |v| {
-            v.resolve(idx.symbol).expect("retrieved nonexistent symbol")
+            v.resolve(idx.0).expect("retrieved nonexistent symbol")
         })
     }
 
@@ -237,9 +248,7 @@ impl Storage {
         if ptr.is_nil() {
             Object::Nil
         } else if ptr.is_symbol() {
-            Object::Symbol(Symbol {
-                symbol: DefaultSymbol::try_from_usize(ptr.idx()).unwrap(),
-            })
+            Object::Symbol(Symbol(DefaultSymbol::try_from_usize(ptr.idx()).unwrap()))
         } else {
             let stored = self.generation.borrow().get(ptr.raw);
             Object::new(ptr, stored)
@@ -259,12 +268,7 @@ impl Storage {
     /// Run a garbage-collection pass, based on the provided roots.
     pub fn gc(&mut self) {
         let current_stats = self.current_stats();
-        self.high_water = StorageStats {
-            // Update stats before compaction:
-            objects: max(self.high_water.objects, current_stats.objects),
-            string_data: max(self.high_water.string_data, current_stats.string_data),
-            symbols: max(self.high_water.symbols, current_stats.symbols),
-        };
+        self.high_water = current_stats.max(&self.high_water);
 
         // Soft-destructure:
         let last_gen = self.generation.take();
@@ -439,7 +443,6 @@ union StoredValue {
     float: Float,
 
     pair: StoredPair,
-    symbol: Symbol,
     string: StoredString,
 
     builtin: Builtin,

@@ -227,12 +227,10 @@ impl EvalEnvironment {
             }
             self.store.set_root(cdr);
         }
-        self.store.gc();
 
         let body = match reader::parse_body(&self.store, body.as_bytes()) {
             Ok(ptr) => ptr,
             Err(e) => {
-                self.store.gc();
                 return Err(Error::UserError(format!("{e}")));
             }
         };
@@ -258,6 +256,11 @@ impl EvalEnvironment {
 
     pub fn store(&self) -> &Storage {
         &self.store
+    }
+
+    /// Perform garbage collection on storage.
+    pub fn gc(&mut self) {
+        self.store.gc()
     }
 
     /// Retrieve a pointer to the result of an evaluation, if complete.

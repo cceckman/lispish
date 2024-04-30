@@ -149,6 +149,10 @@ impl Session {
                                                 value="Step"
                                                 method="post"
                                                 formaction=(format!("/sessions/{}/step", &self.name));
+                                        input   type="submit"
+                                                value="GC"
+                                                method="post"
+                                                formaction=(format!("/sessions/{}/gc", &self.name));
                                     }
                                 }
                             }
@@ -169,6 +173,10 @@ impl Session {
 
     fn format(&self, object_id: &str, label: &str) -> Result<(), eval::Error> {
         self.state.label(object_id, label)
+    }
+
+    fn gc(&mut self) {
+        self.state.gc();
     }
 }
 
@@ -274,6 +282,20 @@ impl SessionHandler {
             [(LOCATION, format!("/sessions/{session_name}"))],
         ))
     }
+    async fn gc(
+        sessions: axum::extract::State<SessionHandler>,
+        Path(session_name): Path<String>,
+        Form(_): Form<HashMap<String, String>>,
+    ) -> Result<impl IntoResponse, axum::http::Response<axum::body::Body>> {
+        let session = sessions.0.session_ptr(&session_name).await;
+        let mut session = session.lock().await;
+        session.gc();
+
+        Ok((
+            StatusCode::SEE_OTHER,
+            [(LOCATION, format!("/sessions/{session_name}"))],
+        ))
+    }
 }
 
 pub fn get_server() -> axum::Router {
@@ -297,5 +319,6 @@ pub fn get_server() -> axum::Router {
         .route("/sessions/:session/step", post(SessionHandler::step))
         .route("/sessions/:session/eval", post(SessionHandler::eval))
         .route("/sessions/:session/format", post(SessionHandler::format))
+        .route("/sessions/:session/gc", post(SessionHandler::gc))
         .with_state(sessions)
 }

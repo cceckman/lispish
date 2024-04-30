@@ -99,21 +99,25 @@ fn render_node<'a>(
     let mut result = Vec::new();
     if let Object::Pair(Pair { car, cdr }) | Object::Function(Pair { car, cdr }) = obj {
         for (ptr, port) in [(car, car_port), (cdr, cdr_port)] {
-            // Symbols are addressed by their intern ID, not by an object.
-            // Unique them (so we don't have long edges to the definitions)
+            if ptr.is_nil() {
+                continue;
+            }
+            // We always visit successors, even if we aren't going to render them,
+            // so we get an accurate count for stats.
+            result.push(ptr);
+
             if ptr.is_symbol() {
-                // We don't need to track the recursive version here-
-                // we know this is a symbol, it won't recurse.
+                // Symbols are addressed by their intern ID, not by an object.
+                // Generate a unique node for each visit.
+                // Unique them (so we don't have long edges to the definitions)
                 let (id, _) = render_node(store, object_meta, graph, ptr);
                 graph.edge(port, id);
-            } else if !ptr.is_nil() {
+                result.push(ptr);
+            } else {
                 // Need to render the target node on the next pass.
                 let name = node_for_ptr(ptr);
                 graph.edge(port, name);
             }
-            // We visit symbols without rendering them in render_gv,
-            // so that we can mark them off of our "visited" count.
-            result.push(ptr);
         }
     };
     (node_id, result)
@@ -122,6 +126,7 @@ fn render_node<'a>(
 /// Render the state of storage into Graphviz graph.
 fn render_gv(store: &Storage, object_meta: &ObjectFormats) -> (StorageStats, Vec<u8>) {
     let mut visited_objects = BitSet::new();
+    let mut visited_symbols = BitSet::new();
     let mut stats = StorageStats::default();
     let mut outbuf = Vec::new();
     {
@@ -132,15 +137,26 @@ fn render_gv(store: &Storage, object_meta: &ObjectFormats) -> (StorageStats, Vec
         queue.push_back(store.root());
 
         while let Some(it) = queue.pop_front() {
+            // Special-case symbols, since they have their own
+            // index space.
+            if it.is_symbol() {
+                if !visited_symbols.get(it.idx()) {
+                    stats.symbols += 1;
+                }
+                visited_symbols.set(it.idx());
+                continue;
+            }
+
             if visited_objects.get(it.idx()) {
                 continue;
             }
             visited_objects.set(it.idx());
-            stats.objects += 1;
-            if it.is_nil() | it.is_symbol() {
-                // We render nil and symbol pointers at their source, not their destination.
+            if it.is_nil() {
+                // We render nil only as a target; we don't insert a node for it.
                 continue;
             }
+            stats.objects += 1;
+
             if let Object::String(s) = store.get(it) {
                 stats.string_data += s.len() as usize;
             }
@@ -189,9 +205,8 @@ impl Storage {
             let dotgraph = dotgraph
                 .wait_with_output()
                 .map_err(|e| format!("failed to complete dot command: {e}"))?;
-            if dotgraph.status.success() {
-                Ok(String::from_utf8_lossy(&dotgraph.stdout).to_string())
-            } else {
+
+            let save_graph = || {
                 let _ = tempfile::NamedTempFile::new()
                     .and_then(|mut f| {
                         f.write_all(&gv)?;
@@ -199,9 +214,16 @@ impl Storage {
                         Ok(pathbuf)
                     })
                     .map(|pathbuf| {
-                        tracing::error!("failed to render; DOT source in {}", pathbuf.display());
+                        tracing::info!("DOT source in {}", pathbuf.display());
                     });
+            };
+            if !dotgraph.status.success() || std::env::var_os("LISPISH_SAVE_GRAPH").is_some() {
+                save_graph();
+            }
 
+            if dotgraph.status.success() {
+                Ok(String::from_utf8_lossy(&dotgraph.stdout).to_string())
+            } else {
                 Err(format!(
                     "failed to render stack graph: dot failed: {}",
                     &String::from_utf8_lossy(&dotgraph.stderr)
@@ -216,7 +238,7 @@ impl Storage {
                     p class="storage-stats" {
                         (stats.render("current"))
                         " | "
-                        (render_stats.render("next GC"))
+                        (render_stats.render("traced"))
                         " | "
                         (max_stats.render("peak"))
                     }
