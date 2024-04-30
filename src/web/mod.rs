@@ -47,6 +47,34 @@ impl Session {
         }
     }
 
+    fn eval(&mut self, expression: &str) -> Result<(), eval::Error> {
+        if let Some(current) = self.expression.take() {
+            // We're evaluating an expression. Evaluate it to completion.
+            match self.state.eval() {
+                Err(e) => {
+                    self.history.push((current, format!("{e}")));
+                    Err(e)
+                }
+                Ok(_) => {
+                    // Retrieve the value.
+                    let result = self.state.result()?;
+                    self.history
+                        .push((current, self.state.store().display(result)));
+                    Ok(())
+                }
+            }
+        } else {
+            // Start a new expression.
+            self.state.start(expression)?;
+            // Only "commit" to this expression if it parsed OK.
+            self.expression = Some(expression.to_owned());
+            // Return after setup (parsing) - we want to give a chance to render before any
+            // execution takes place.
+
+            Ok(())
+        }
+    }
+
     fn step(&mut self, expression: &str) -> Result<(), eval::Error> {
         if let Some(current) = self.expression.take() {
             // We're evaluating an expression. Single-step.
@@ -113,10 +141,10 @@ impl Session {
                                         }
                                     }
                                     div id="control" {
-                                        // input   type="submit"
-                                        //         value="Evaluate"
-                                        //         method="post"
-                                        //         formaction=(format!("/sessions/{}/eval", &self.name));
+                                        input   type="submit"
+                                                value="Evaluate"
+                                                method="post"
+                                                formaction=(format!("/sessions/{}/eval", &self.name));
                                         input   type="submit"
                                                 value="Step"
                                                 method="post"
@@ -125,6 +153,13 @@ impl Session {
                                 }
                             }
                             (state)
+                            dialog id="object-label" popover="auto" {
+                                form method="post" {
+                                    input   type="text" name="label" id="label" placeholder="Label";
+                                    input   type="hidden" name="object_id" id="object_id" value="";
+                                    input   type="submit" method="post" value="Set" formaction=(format!("/sessions/{}/format", &self.name));
+                                }
+                            }
                         }
                     }
                 }
@@ -173,7 +208,40 @@ impl SessionHandler {
         // even a system error gets displayed next time around.
 
         // TODO: log fault-type errors.
-        let _ = session.step(form.get("expression").map(|e| e.as_str()).unwrap_or(""));
+        if let Err(e) = session.step(form.get("expression").map(|e| e.as_str()).unwrap_or("")) {
+            tracing::error!(
+                "encountered error in stepping: session: {} error: {}",
+                session_name,
+                e
+            );
+        }
+
+        Ok((
+            StatusCode::SEE_OTHER,
+            [(LOCATION, format!("/sessions/{session_name}"))],
+        ))
+    }
+
+    async fn eval(
+        sessions: axum::extract::State<SessionHandler>,
+        Path(session_name): Path<String>,
+        Form(form): Form<HashMap<String, String>>,
+    ) -> Result<impl IntoResponse, axum::http::Response<axum::body::Body>> {
+        let session = sessions.0.session_ptr(&session_name).await;
+        let mut session = session.lock().await;
+
+        // We always return "OK" and redirect-
+        // even a system error gets displayed next time around.
+
+        // TODO: log fault-type errors.
+        if let Err(e) = session.eval(form.get("expression").map(|e| e.as_str()).unwrap_or("")) {
+            tracing::error!(
+                "encountered error in stepping: session: {} error: {}",
+                session_name,
+                e
+            );
+        }
+
         Ok((
             StatusCode::SEE_OTHER,
             [(LOCATION, format!("/sessions/{session_name}"))],
@@ -191,7 +259,14 @@ impl SessionHandler {
         let label: &str = form.get("label").map(String::as_str).unwrap_or("");
         let object_id: &str = form.get("object_id").map(String::as_str).unwrap_or("");
         // TODO: Color as well.
-        let _ = session.format(object_id, label);
+
+        if let Err(e) = session.format(object_id, label) {
+            tracing::error!(
+                "encountered error in stepping: session: {} error: {}",
+                session_name,
+                e
+            );
+        }
 
         Ok((
             StatusCode::SEE_OTHER,
@@ -219,6 +294,7 @@ pub fn get_server() -> axum::Router {
         .route("/sessions/:session", get(SessionHandler::get))
         .route("/sessions/:session/", get(SessionHandler::get))
         .route("/sessions/:session/step", post(SessionHandler::step))
+        .route("/sessions/:session/eval", post(SessionHandler::eval))
         .route("/sessions/:session/format", post(SessionHandler::format))
         .with_state(sessions)
 }

@@ -1,5 +1,8 @@
 #[tokio::main]
 async fn main() {
+    // install global collector configured based on RUST_LOG env var.
+    tracing_subscriber::fmt::init();
+
     let server = lispish::web::get_server();
 
     // run our app with hyper, listening globally on port 3000
