@@ -27,6 +27,12 @@ pub struct Ptr<'a> {
 
 impl std::fmt::Display for Ptr<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.raw.fmt(f)
+    }
+}
+
+impl std::fmt::Display for StoredPtr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let tag = match self.tag() {
             StoredPtr::TAG_NIL => "nil",
             StoredPtr::TAG_INTEGER => "i64",
@@ -39,6 +45,31 @@ impl std::fmt::Display for Ptr<'_> {
             _ => "???",
         };
         write!(f, "{}#{}", tag, self.idx())
+    }
+}
+
+impl std::str::FromStr for StoredPtr {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if let Some((tag, number)) = s.split_once("#") {
+            let tag = match tag {
+                "nil" => StoredPtr::TAG_NIL,
+                "i64" => StoredPtr::TAG_INTEGER,
+                "f64" => StoredPtr::TAG_FLOAT,
+                "str" => StoredPtr::TAG_STRING,
+                "sym" => StoredPtr::TAG_SYMBOL,
+                "obj" => StoredPtr::TAG_PAIR,
+                "fun" => StoredPtr::TAG_FUNCTION,
+                "sys" => StoredPtr::TAG_BUILTIN,
+                _ => return Err(format!("invalid tag {}", tag)),
+            };
+            let idx: usize = number
+                .parse()
+                .map_err(|e| format!("invalid index: {}", e))?;
+            Ok(StoredPtr::new(idx, tag))
+        } else {
+            Err(format!("invalid pointer {}", s))
+        }
     }
 }
 

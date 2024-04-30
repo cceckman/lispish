@@ -130,6 +130,10 @@ impl Session {
                 }
         ))
     }
+
+    fn format(&self, object_id: &str, label: &str) -> Result<(), eval::Error> {
+        self.state.label(object_id, label)
+    }
 }
 
 #[derive(Default, Clone)]
@@ -175,6 +179,25 @@ impl SessionHandler {
             [(LOCATION, format!("/sessions/{session_name}"))],
         ))
     }
+
+    async fn format(
+        sessions: axum::extract::State<SessionHandler>,
+        Path(session_name): Path<String>,
+        Form(form): Form<HashMap<String, String>>,
+    ) -> Result<impl IntoResponse, axum::http::Response<axum::body::Body>> {
+        let session = sessions.0.session_ptr(&session_name).await;
+        let session = session.lock().await;
+
+        let label: &str = form.get("label").map(String::as_str).unwrap_or("");
+        let object_id: &str = form.get("object_id").map(String::as_str).unwrap_or("");
+        // TODO: Color as well.
+        let _ = session.format(object_id, label);
+
+        Ok((
+            StatusCode::SEE_OTHER,
+            [(LOCATION, format!("/sessions/{session_name}"))],
+        ))
+    }
 }
 
 pub fn get_server() -> axum::Router {
@@ -196,5 +219,6 @@ pub fn get_server() -> axum::Router {
         .route("/sessions/:session", get(SessionHandler::get))
         .route("/sessions/:session/", get(SessionHandler::get))
         .route("/sessions/:session/step", post(SessionHandler::step))
+        .route("/sessions/:session/format", post(SessionHandler::format))
         .with_state(sessions)
 }
