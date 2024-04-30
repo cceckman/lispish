@@ -52,7 +52,7 @@ fn render_node<'a>(
         } else {
             maud::html!(
                 tr { td border="0" colspan="2" port="id" { (it) }}
-                tr { td border="0" colspan="2" port="label" { b { (name) } }}
+                tr { td border="0" colspan="2" port="label" align="text" { b { (name) } }}
             )
         }
     };
@@ -122,6 +122,7 @@ pub fn render_store(store: &Storage, object_meta: &ObjectFormats) -> Vec<u8> {
     {
         let mut writer = DotWriter::from(&mut outbuf);
         let mut graph = writer.digraph();
+        graph.node_attributes().set_font("monospace");
         let mut queue = VecDeque::new();
         queue.push_back(store.root());
 
