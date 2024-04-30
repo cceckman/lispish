@@ -150,15 +150,6 @@ trait Bind<'a> {
 }
 
 impl Storage {
-    /// Render the current state of storage into a Graphviz document.
-    #[cfg(feature = "render")]
-    pub fn render_gv(&self) -> Vec<u8> {
-        use self::render::render_store;
-
-        let labels = self.labels.borrow();
-        render_store(self, &labels)
-    }
-
     /// Set the formatting metadata for the given node.
     #[cfg(feature = "render")]
     pub fn format<'a>(&'a self, p: Ptr<'_>) -> impl 'a + DerefMut<Target = ObjectFormat> {

@@ -7,6 +7,14 @@ main {
 	height: 100%;
 }
 
+main > div {
+	padding: 0.5em;
+}
+
+p.storage-stats {
+	margin-top: 0pt;
+}
+
 td {
 	border: 0;
 }
