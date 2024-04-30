@@ -28,6 +28,16 @@ impl EvalEnvironment {
             if dotgraph.status.success() {
                 Ok(String::from_utf8_lossy(&dotgraph.stdout).to_string())
             } else {
+                let _ = tempfile::NamedTempFile::new()
+                    .and_then(|mut f| {
+                        f.write_all(&gv)?;
+                        let (_, pathbuf) = f.keep()?;
+                        Ok(pathbuf)
+                    })
+                    .map(|pathbuf| {
+                        tracing::error!("failed to render; DOT source in {}", pathbuf.display());
+                    });
+
                 Err(format!(
                     "failed to render stack graph: dot failed: {}",
                     &String::from_utf8_lossy(&dotgraph.stderr)

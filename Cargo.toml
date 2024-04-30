@@ -12,16 +12,18 @@ maud = { version = "0.26.0", optional = true, features = ["axum"] }
 rand = { version = "0.8.5", optional = true }
 regex = "1.10.4"
 string-interner = "0.15.0"
+tempfile = { version = "3.10.1", optional = true }
 tokio = { version = "1.37.0", optional = true, features = ["rt-multi-thread"] }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", optional = true }
 
 [features]
-render = ["dep:maud", "dep:dot-writer"]
+render = ["dep:maud", "dep:dot-writer", "dep:tempfile"]
 web = ["render", "dep:tokio", "dep:axum", "dep:rand", "dep:tracing-subscriber"]
 default = ["all"]
 all = ["render", "web"]
 tracing-subscriber = ["dep:tracing-subscriber"]
+tempfile = ["dep:tempfile"]
 
 [[bin]]
 name = "web"

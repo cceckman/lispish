@@ -21,6 +21,100 @@ pub struct ObjectFormat {
 
 pub type ObjectFormats = HashMap<StoredPtr, ObjectFormat>;
 
+fn render_node<'a>(
+    store: &'a Storage,
+    object_meta: &ObjectFormats,
+    graph: &mut dot_writer::Scope,
+    it: Ptr<'a>,
+) -> (dot_writer::NodeId, Vec<Ptr<'a>>) {
+    let id = node_for_ptr(it);
+    let mut node = if it.is_symbol() {
+        graph.node_auto()
+    } else {
+        graph.node_named(&id)
+    };
+    let node_id = node.id();
+
+    let obj = store.get(it);
+    node.set_shape(dot_writer::Shape::None);
+
+    let get_name = |ptr: &Ptr| {
+        let name = object_meta
+            .get(&ptr.raw)
+            .map(|m| m.label.as_str())
+            .unwrap_or("");
+        if name.is_empty() {
+            maud::html!(
+                tr {
+                    td border="0" colspan="2" port="id" { (it) }
+                }
+            )
+        } else {
+            maud::html!(
+                tr { td border="0" colspan="2" port="id" { (it) }}
+                tr { td border="0" colspan="2" port="label" { b { (name) } }}
+            )
+        }
+    };
+    let name = get_name(&it);
+
+    fn single_value(v: impl std::fmt::Display) -> maud::PreEscaped<String> {
+        maud::html!(td colspan="2" { (v) })
+    }
+
+    let value: maud::PreEscaped<String> = match obj {
+        Object::Nil => unreachable!("must not queue to nil pointer"),
+        Object::Integer(v) => single_value(v),
+        Object::Float(v) => single_value(v),
+        Object::String(v) => {
+            let bytes = store.get_string(&v);
+            single_value(String::from_utf8_lossy(&bytes))
+        }
+        Object::Symbol(v) => single_value(store.get_symbol(v)),
+        Object::Builtin(fptr) => single_value(format!("{fptr:p}")),
+        Object::Pair(Pair { car, cdr }) | Object::Function(Pair { car, cdr }) => maud::html!(
+                    td port="car" { (car) }
+                    td port="cdr" { (cdr) }
+        ),
+    };
+    node.set_html(&format!(
+        "<{}>",
+        maud::html!(
+            table {
+                (name)
+                tr { (value) }
+            }
+        )
+        .into_string()
+    ));
+
+    let car_port = node.id().port("car");
+    let cdr_port = node.id().port("cdr");
+    std::mem::drop(node);
+
+    // After completing the node, make the outbound edges.
+    let mut result = Vec::new();
+    if let Object::Pair(Pair { car, cdr }) | Object::Function(Pair { car, cdr }) = obj {
+        for (ptr, port) in [(car, car_port), (cdr, cdr_port)] {
+            // Symbols are addressed by their intern ID, not by an object.
+            // Unique them (so we don't have long edges to the definitions)
+            if ptr.is_symbol() {
+                // We don't need to track the recursive version here-
+                // we know this is a symbol, it won't recurse.
+                let (id, _) = render_node(store, object_meta, graph, ptr);
+                graph.edge(port, id);
+                continue;
+            } else if !ptr.is_nil() {
+                // Need to render the target node on the next pass.
+                let name = node_for_ptr(ptr);
+                graph.edge(port, name);
+                result.push(ptr);
+            }
+        }
+    };
+    (node_id, result)
+}
+
 /// Render the state of storage into Graphviz graph.
 pub fn render_store(store: &Storage, object_meta: &ObjectFormats) -> Vec<u8> {
     let mut visited_objects = BitSet::new();
@@ -40,92 +134,8 @@ pub fn render_store(store: &Storage, object_meta: &ObjectFormats) -> Vec<u8> {
                 // We render nil pointers at their source, not their destination.
                 continue;
             }
-
-            let id = node_for_ptr(it);
-            let mut node = graph.node_named(&id);
-
-            let obj = store.get(it);
-            let (shape, newline) = match obj {
-                Object::Pair { .. } => (dot_writer::Shape::None, "<BR/>"),
-                Object::Function { .. } => (dot_writer::Shape::None, "<BR/>"),
-                _ => (dot_writer::Shape::Record, "\\n"),
-            };
-            node.set_shape(shape);
-
-            let name = {
-                let name = object_meta
-                    .get(&it.raw)
-                    .map(|m| m.label.as_str())
-                    .unwrap_or("");
-                if name.is_empty() {
-                    format!("{it}")
-                } else {
-                    format!("{}{}<B>{}</B>", it, newline, name)
-                }
-            };
-
-            match obj {
-                Object::Nil => continue,
-                Object::Integer(v) => {
-                    node.set_label(&format!("{{{name}|{v}}}"));
-                }
-                Object::Float(v) => {
-                    node.set_label(&format!("{{{name}|{v}}}"));
-                }
-                Object::String(v) => {
-                    let bytes = store.get_string(&v);
-                    let v = String::from_utf8_lossy(&bytes);
-                    node.set_label(&format!("{{{name}|{v}}}"));
-                }
-                Object::Symbol(v) => {
-                    let v = store.get_symbol(v);
-                    node.set_label(&format!("{{{name}|{v}}}"));
-                }
-                Object::Builtin(fptr) => {
-                    node.set_label(&format!("{{{name}|{fptr:p}}}"));
-                }
-                Object::Pair(Pair { car, cdr }) | Object::Function(Pair { car, cdr }) => {
-                    let label = format!(
-                        "<{}>",
-                        maud::html!(
-                            table {
-                                tr { td colspan="2" border="0" { (maud::PreEscaped(name)) } }
-                                tr {
-                                    td port="car" { (car) }
-                                    td port="cdr" { (cdr) }
-                                }
-                            }
-                        )
-                        .into_string()
-                    );
-                    node.set_html(&label);
-                    let car_port = node.id().port("car");
-                    let cdr_port = node.id().port("cdr");
-                    std::mem::drop(node);
-
-                    for (ptr, port) in [(car, car_port), (cdr, cdr_port)] {
-                        if ptr.is_nil() {
-                            continue;
-                        }
-                        // Symbols are addressed by their intern ID, not by an object.
-                        // Unique them (so we don't have long edges to the definitions)
-                        if ptr.is_symbol() {
-                            let v = store.get_symbol_ptr(ptr);
-                            let id = {
-                                let mut sym_node = graph.node_auto();
-                                sym_node.set_shape(dot_writer::Shape::Record);
-                                sym_node.set_label(&format!("{{{ptr}|{v}}}"));
-                                sym_node.id()
-                            };
-                            graph.edge(port, id);
-                            continue;
-                        }
-                        let name = node_for_ptr(ptr);
-                        graph.edge(port, name);
-                        queue.push_back(ptr);
-                    }
-                }
-            }
+            let (_, next) = render_node(store, object_meta, &mut graph, it);
+            queue.extend(next);
         }
     }
     outbuf

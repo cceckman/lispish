@@ -11,17 +11,28 @@ function on_click_node(ev) {
 	}
 	// Then find the first text log, to get the node name...
 	let nodename = "";
+	let existing_label = "";
 	for (const child of target.childNodes) {
-		if (child.nodeName === "text") {
+		if (child.nodeName !== "text") {
+			continue;
+		}
+		if (nodename === "") {
 			nodename = child.innerHTML;
+			continue;
+		}
+		// TODO: Not accurate! This might be the value, not a label,
+		// if there is no existing label.
+		// How do we tell? ...we can't get it structurally, so we may have to use the hack:
+		if (child.getAttribute("font-weight") === "bold") {
+			existing_label = child.innerHTML;
 			break;
 		}
 	}
-	// Set the hidden input:
-	//
-	// TODO: Set object in hiddden input
-	const hidden = document.getElementById("object_id");
+	const hidden = document.getElementById("popup_object_id");
 	hidden.value = nodename;
+	const label = document.getElementById("popup_label");
+	label.value = existing_label;
+
 
 	console.log("node was clicked: ", ev)
 	console.log("set input: ", hidden)

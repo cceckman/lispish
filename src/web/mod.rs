@@ -155,8 +155,8 @@ impl Session {
                             (state)
                             dialog id="object-label" popover="auto" {
                                 form method="post" {
-                                    input   type="text" name="label" id="label" placeholder="Label";
-                                    input   type="hidden" name="object_id" id="object_id" value="";
+                                    input   type="text" name="label" id="popup_label" placeholder="Label";
+                                    input   type="hidden" name="object_id" id="popup_object_id" value="";
                                     input   type="submit" method="post" value="Set" formaction=(format!("/sessions/{}/format", &self.name));
                                 }
                             }
