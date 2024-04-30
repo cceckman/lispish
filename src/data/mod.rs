@@ -24,18 +24,19 @@
 
 mod bitset;
 
-use std::cell::{Ref, RefCell};
+use std::cell::{Ref, RefCell, RefMut};
 use std::ops::DerefMut;
 use std::{cmp::max, collections::VecDeque, ops::Range};
 mod objects;
 pub use objects::*;
-use std::collections::HashMap;
 use string_interner::DefaultSymbol;
 use string_interner::Symbol as _;
 
 use crate::eval::Builtin;
 
 use self::bitset::BitSet;
+pub use self::render::ObjectFormat;
+use self::render::ObjectFormats;
 
 #[cfg(feature = "render")]
 mod render;
@@ -53,9 +54,9 @@ pub struct Storage {
 
     high_water: StorageStats,
 
-    /// Node labels.
+    /// Node metadata.
     /// These provide useful debugging info, like "this is the root of the stack".
-    labels: RefCell<HashMap<StoredPtr, String>>,
+    labels: RefCell<ObjectFormats>,
 }
 
 /// Data that exists for a single "generation" (between GCs).
@@ -158,9 +159,13 @@ impl Storage {
         render_store(self, &labels)
     }
 
+    /// Set the formatting metadata for the given node.
     #[cfg(feature = "render")]
-    pub fn add_label(&self, p: Ptr, label: &str) {
-        self.labels.borrow_mut().insert(p.raw, label.to_string());
+    pub fn format<'a>(&'a self, p: Ptr<'_>) -> impl 'a + DerefMut<Target = ObjectFormat> {
+        RefMut::map(self.labels.borrow_mut(), |m| -> &mut ObjectFormat {
+            let entry = m.entry(p.raw);
+            entry.or_default()
+        })
     }
 
     fn bind<'a, T: Bind<'a>>(&'a self, raw: T::Free) -> T {
@@ -292,6 +297,18 @@ impl Storage {
             Object::Builtin(f) => format!("fn {f:p}"),
         }
     }
+
+    pub fn lookup(&self, object_id: &str) -> Result<Ptr<'_>, String> {
+        let stored: StoredPtr = object_id.parse()?;
+        let max_obj = self.generation.borrow().objects.len();
+        let max_sym = self.symbols.borrow().len();
+
+        if stored.is_symbol() && stored.idx() < max_sym || stored.idx() < max_obj {
+            Ok(self.bind(stored))
+        } else {
+            Err(format!("object {} is invalid - out of range", stored))
+        }
+    }
 }
 
 /// Internal GC routine.
@@ -303,7 +320,7 @@ impl Storage {
 fn gc_internal(
     mut last_gen: Generation,
     roots: &mut [&mut StoredPtr],
-    labels: &mut HashMap<StoredPtr, String>,
+    labels: &mut ObjectFormats,
 ) -> Generation {
     // TODO: Add trace output for debug
 

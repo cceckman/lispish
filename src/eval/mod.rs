@@ -12,7 +12,7 @@ use crate::{
     reader::{self},
 };
 use core::task::Poll;
-use std::fmt::Display;
+use std::{borrow::Borrow, fmt::Display};
 
 use self::builtins::STDLIB;
 mod builtins;
@@ -175,7 +175,7 @@ impl EvalEnvironment {
 
         #[cfg(feature = "render")]
         {
-            store.add_label(base_frame, "Builtins");
+            store.format(base_frame).label = "Builtins".to_string();
         }
 
         // An environment is a list of frames.
@@ -225,7 +225,7 @@ impl EvalEnvironment {
 
         #[cfg(feature = "render")]
         {
-            self.store.add_label(self.store.root(), "TOP ENV");
+            self.store.format(self.store.root()).label = "TOP ENV".to_string();
         }
 
         let body = match reader::parse_body(&self.store, body.as_bytes()) {
@@ -240,7 +240,7 @@ impl EvalEnvironment {
 
         #[cfg(feature = "render")]
         {
-            self.store.add_label(body, "BODY");
+            self.store.format(body).label = "BODY".to_string();
         }
 
         // When idle, the top-level environment is the only thing on the stack.
@@ -256,7 +256,7 @@ impl EvalEnvironment {
 
         #[cfg(feature = "render")]
         {
-            self.store.add_label(self.store.root(), "STACK");
+            self.store.format(self.store.root()).label = "STACK".to_owned();
         }
 
         // We'll execute by evalling the body.
@@ -547,6 +547,15 @@ impl EvalEnvironment {
             }
         }
         Ok(Poll::Pending)
+    }
+
+    pub fn label(&self, object_id: &str, format: &str) -> Result<(), Error> {
+        let store = self.store.borrow();
+        let ptr = store
+            .lookup(object_id)
+            .to_user_error(format!("object {} does not exist", object_id))?;
+        store.format(ptr).label = format.to_owned();
+        Ok(())
     }
 }
 

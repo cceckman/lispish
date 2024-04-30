@@ -12,8 +12,17 @@ fn node_for_ptr(p: Ptr) -> String {
     format!(r#"<{p}>"#)
 }
 
+/// Object metadata, for rendering purposes.
+#[derive(Default)]
+pub struct ObjectFormat {
+    pub label: String,
+    pub bg_color: String,
+}
+
+pub type ObjectFormats = HashMap<StoredPtr, ObjectFormat>;
+
 /// Render the state of storage into Graphviz graph.
-pub fn render_store(store: &Storage, labeled_nodes: &HashMap<StoredPtr, String>) -> Vec<u8> {
+pub fn render_store(store: &Storage, object_meta: &ObjectFormats) -> Vec<u8> {
     let mut visited_objects = BitSet::new();
     let mut outbuf = Vec::new();
     {
@@ -43,10 +52,16 @@ pub fn render_store(store: &Storage, labeled_nodes: &HashMap<StoredPtr, String>)
             };
             node.set_shape(shape);
 
-            let name = if let Some(label) = labeled_nodes.get(&it.raw) {
-                format!("{it}{newline}<B>{label}</B>")
-            } else {
-                format!("{it}")
+            let name = {
+                let name = object_meta
+                    .get(&it.raw)
+                    .map(|m| m.label.as_str())
+                    .unwrap_or("");
+                if name.is_empty() {
+                    format!("{it}")
+                } else {
+                    format!("{}{}<B>{}</B>", it, newline, name)
+                }
             };
 
             match obj {

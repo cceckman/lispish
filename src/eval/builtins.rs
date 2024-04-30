@@ -22,7 +22,6 @@ pub const BUILTINS: &[(&str, Builtin)] = &[
     ("list", builtin_list),
     ("set!", builtin_set),
     ("quote", builtin_quote),
-    ("sys:eq?", builtin_sys_eq),
     // ("if", builtin_if),
     // ("car", builtin_car)
     // ("cdr", builtin_cdr)
@@ -33,13 +32,14 @@ pub const BUILTINS: &[(&str, Builtin)] = &[
     // TODO: move this to "masked builtins"
     // These act as system functions to back standard-library functions.
     // sys:add is the function of two variables that backs the "+" operator.
-    ("sys:add", builtin_add),
+    ("sys:eq?", builtin_sys_eq),
+    ("sys:add", builtin_sys_add),
 ];
 
 // A two-argument system function backing the "+" operator.
 // A nice thing about this: we can assume the arguments
 // have already been evaluated.
-fn builtin_add(eval: &mut EvalEnvironment) -> Result<(), Error> {
+fn builtin_sys_add(eval: &mut EvalEnvironment) -> Result<(), Error> {
     let _env = pop(eval.store())?;
     let args = pop(eval.store())?;
 
