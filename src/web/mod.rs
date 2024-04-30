@@ -13,6 +13,7 @@ use std::task::Poll;
 use tokio::sync::Mutex;
 
 const STYLE: &[u8] = include_bytes!("style.css");
+const APP: &[u8] = include_bytes!("app.js");
 
 struct Session {
     name: String,
@@ -88,6 +89,7 @@ impl Session {
                     head {
                         title { (self.name) }
                         link rel="stylesheet" href="/style.css";
+                        script type="text/javascript" src="/app.js" defer { };
                     }
                     body {
                         main {
@@ -186,6 +188,10 @@ pub fn get_server() -> axum::Router {
         .route(
             "/style.css",
             get(|| async { ([(axum::http::header::CONTENT_TYPE, "text/css")], STYLE) }),
+        )
+        .route(
+            "/app.js",
+            get(|| async { ([(axum::http::header::CONTENT_TYPE, "text/javascript")], APP) }),
         )
         .route("/sessions/:session", get(SessionHandler::get))
         .route("/sessions/:session/", get(SessionHandler::get))

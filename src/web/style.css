@@ -54,3 +54,11 @@ table {
 	margin-bottom: 1en;
 	border-bottom: 1px solid black;
 }
+
+/*
+By default, the onclick handler for a <g> isn't activated within its whole area, but just within its inner elements.
+This makes it activate within the full area- like we want.
+*/
+g.node {
+	pointer-events: fill;
+}
