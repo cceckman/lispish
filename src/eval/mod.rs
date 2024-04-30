@@ -173,13 +173,8 @@ impl EvalEnvironment {
             base_frame = store.put(Pair::cons(binding, base_frame));
         }
 
-        #[cfg(feature = "render")]
-        {
-            store.format(base_frame).label = "Builtins".to_string();
-        }
-
         // An environment is a list of frames.
-        // TODO: I'm not sure this is accurate, or if there's another layer in there.
+        // TODO: I'm not sure this is accurate, or if we should consider it something different.
         let base_env = store.put(Pair::cons(base_frame, Ptr::nil()));
 
         // When idle, we only have the op-level environment stack.
@@ -197,6 +192,17 @@ impl EvalEnvironment {
             .expect("stdlib does not parse")
             .eval()
             .expect("stdlib execution should always succeed");
+
+        // Discard the stdlib evaluation:
+        pop(&env.store).expect("could not recover from stdlib setup");
+
+        #[cfg(feature = "render")]
+        {
+            let Pair { car: base_env, .. } =
+                get_pair(&env.store, env.store.root()).expect("stack top is not a pair");
+            env.store.format(env.store.root()).label = "Bottom of operand stack".to_string();
+            env.store.format(base_env).label = "Top-level Environment".to_string();
+        }
 
         env
     }
@@ -223,11 +229,6 @@ impl EvalEnvironment {
         }
         self.store.gc();
 
-        #[cfg(feature = "render")]
-        {
-            self.store.format(self.store.root()).label = "TOP ENV".to_string();
-        }
-
         let body = match reader::parse_body(&self.store, body.as_bytes()) {
             Ok(ptr) => ptr,
             Err(e) => {
@@ -237,11 +238,6 @@ impl EvalEnvironment {
         };
         // TODO: Currently "empty list", i.e. empty input, comes up as "system error".
         // That's not right; it should come up as "need more input"...right?
-
-        #[cfg(feature = "render")]
-        {
-            self.store.format(body).label = "BODY".to_string();
-        }
 
         // When idle, the top-level environment is the only thing on the stack.
         let top_env = peek(&self.store)?;
@@ -253,11 +249,6 @@ impl EvalEnvironment {
         // and can do a final pop of (result).
         push(&self.store, body);
         push(&self.store, top_env);
-
-        #[cfg(feature = "render")]
-        {
-            self.store.format(self.store.root()).label = "STACK".to_owned();
-        }
 
         // We'll execute by evalling the body.
         self.op_stack.push(Op::EvalBody);
