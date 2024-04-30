@@ -2,10 +2,13 @@ use std::collections::{HashMap, VecDeque};
 
 use dot_writer::Attributes;
 use dot_writer::DotWriter;
+use std::io::Write;
+use std::process::Stdio;
 
 use crate::data::{Object, Pair, Ptr, Storage};
 
 use super::bitset::BitSet;
+use super::StorageStats;
 use super::StoredPtr;
 
 fn node_for_ptr(p: Ptr) -> String {
@@ -103,21 +106,23 @@ fn render_node<'a>(
                 // we know this is a symbol, it won't recurse.
                 let (id, _) = render_node(store, object_meta, graph, ptr);
                 graph.edge(port, id);
-                continue;
             } else if !ptr.is_nil() {
                 // Need to render the target node on the next pass.
                 let name = node_for_ptr(ptr);
                 graph.edge(port, name);
-                result.push(ptr);
             }
+            // We visit symbols without rendering them in render_gv,
+            // so that we can mark them off of our "visited" count.
+            result.push(ptr);
         }
     };
     (node_id, result)
 }
 
 /// Render the state of storage into Graphviz graph.
-pub fn render_store(store: &Storage, object_meta: &ObjectFormats) -> Vec<u8> {
+fn render_gv(store: &Storage, object_meta: &ObjectFormats) -> (StorageStats, Vec<u8>) {
     let mut visited_objects = BitSet::new();
+    let mut stats = StorageStats::default();
     let mut outbuf = Vec::new();
     {
         let mut writer = DotWriter::from(&mut outbuf);
@@ -131,13 +136,95 @@ pub fn render_store(store: &Storage, object_meta: &ObjectFormats) -> Vec<u8> {
                 continue;
             }
             visited_objects.set(it.idx());
-            if it.is_nil() {
-                // We render nil pointers at their source, not their destination.
+            stats.objects += 1;
+            if it.is_nil() | it.is_symbol() {
+                // We render nil and symbol pointers at their source, not their destination.
                 continue;
+            }
+            if let Object::String(s) = store.get(it) {
+                stats.string_data += s.len() as usize;
             }
             let (_, next) = render_node(store, object_meta, &mut graph, it);
             queue.extend(next);
         }
     }
-    outbuf
+    (stats, outbuf)
+}
+
+impl StorageStats {
+    fn render(&self, header: &str) -> maud::PreEscaped<String> {
+        maud::html!(
+            strong { (header) ": " }
+            (self.objects) " objects / "
+            (self.string_data) " string bytes / "
+            (self.symbols) " symbols"
+        )
+    }
+}
+
+impl Storage {
+    pub fn render(&self) -> Result<maud::PreEscaped<String>, String> {
+        let labels = self.labels.borrow();
+        let (render_stats, gv) = render_gv(self, &labels);
+        std::mem::drop(labels);
+        let stats = self.current_stats();
+        let max_stats = self.max_stats();
+
+        // TODO: Work out how to make this async;
+        // we shouldn't really be holding on for it.
+        let graph_svg = move || -> Result<String, String> {
+            let mut dotgraph = std::process::Command::new("dot")
+                .arg("-Tsvg")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .map_err(|e| format!("failed to launch storage render: {e}"))?;
+            dotgraph
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(&gv)
+                .map_err(|e| format!("failed to provide graphviz input: {e}"))?;
+            let dotgraph = dotgraph
+                .wait_with_output()
+                .map_err(|e| format!("failed to complete dot command: {e}"))?;
+            if dotgraph.status.success() {
+                Ok(String::from_utf8_lossy(&dotgraph.stdout).to_string())
+            } else {
+                let _ = tempfile::NamedTempFile::new()
+                    .and_then(|mut f| {
+                        f.write_all(&gv)?;
+                        let (_, pathbuf) = f.keep()?;
+                        Ok(pathbuf)
+                    })
+                    .map(|pathbuf| {
+                        tracing::error!("failed to render; DOT source in {}", pathbuf.display());
+                    });
+
+                Err(format!(
+                    "failed to render stack graph: dot failed: {}",
+                    &String::from_utf8_lossy(&dotgraph.stderr)
+                ))
+            }
+        }()
+        .map_err(|e| format!("error in rendering stack: {e}"))?;
+
+        Ok(maud::html!(
+                div class="heap" {
+                    h3 { "Storage" }
+                    p class="storage-stats" {
+                        (stats.render("current"))
+                        " | "
+                        (render_stats.render("next GC"))
+                        " | "
+                        (max_stats.render("peak"))
+                    }
+                    div class="heap-display" {
+                        (maud::PreEscaped(graph_svg))
+                    }
+                }
+
+        ))
+    }
 }
