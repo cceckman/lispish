@@ -170,39 +170,6 @@ fn define_int_value_and_retrieve() {
 }
 
 #[test]
-fn sys_add_integers() {
-    let mut eval = EvalEnvironment::new();
-    eval.start(
-        r#"
-        (sys:add 5 3)
-        "#,
-    )
-    .unwrap();
-
-    match eval.eval().unwrap() {
-        Object::Integer(8) => (),
-        v => panic!("unexpected result: {v:?}"),
-    };
-}
-
-#[test]
-fn sys_add_floats() {
-    let mut eval = EvalEnvironment::new();
-    eval.start("(sys:add 0.5 1.5)").unwrap();
-
-    match eval.eval().unwrap() {
-        Object::Float(v) => {
-            // Yes, we're asserting equality rather than an approximation.
-            // 0.5, 1.5, and 2.0 all have power-of-two fractions and whole parts,
-            // so both should be exactly representations in any binary floating-point format.
-            // f64 especially.
-            assert_eq!(v, 2.0);
-        }
-        v => panic!("unexpected result: {v:?}"),
-    };
-}
-
-#[test]
 fn set() -> Result<(), Error> {
     let mut eval = EvalEnvironment::new();
     eval.start(
@@ -421,3 +388,105 @@ fn skip_if_block() -> Result<(), Error> {
 
     Ok(())
 }
+
+#[test]
+fn and() -> Result<(), Error> {
+    let mut eval = EvalEnvironment::new();
+
+    for expr in [
+        "(eq? (and #t #t) #t)",
+        "(eq? (and #t #t) #t)",
+        "(eq? (and #f #t) #f)",
+        "(eq? (and #t #f) #f)",
+        "(eq? (and #f #f) #f)",
+    ] {
+        eval.start(expr)?.eval()?;
+        let got = eval.result_ptr()?;
+        let want = eval.store().put_symbol("#t");
+        assert_eq!(
+            got, want,
+            "unexpected result from {}: got: {} want: {}",
+            expr, got, want
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn or() -> Result<(), Error> {
+    let mut eval = EvalEnvironment::new();
+
+    for expr in [
+        "(eq? (or #t #t) #t)",
+        "(eq? (or #f #t) #t)",
+        "(eq? (or #t #f) #t)",
+        "(eq? (or #f #f) #f)",
+    ] {
+        eval.start(expr)?.eval()?;
+        let got = eval.result_ptr()?;
+        let want = eval.store().put_symbol("#t");
+        assert_eq!(
+            got, want,
+            "unexpected result from {}: got: {} want: {}",
+            expr, got, want
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn xor() -> Result<(), Error> {
+    let mut eval = EvalEnvironment::new();
+
+    for expr in [
+        "(eq? (xor #t #t) #f)",
+        "(eq? (xor #f #t) #t)",
+        "(eq? (xor #t #f) #t)",
+        "(eq? (xor #f #f) #f)",
+    ] {
+        eval.start(expr)?.eval()?;
+        let got = eval.result_ptr()?;
+        let want = eval.store().put_symbol("#t");
+        assert_eq!(
+            got, want,
+            "unexpected result from {}: got: {} want: {}",
+            expr, got, want
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn add_ints() -> Result<(), Error> {
+    let mut eval = EvalEnvironment::new();
+
+    eval.start("(+ 1 2)")?.eval()?;
+    match eval.result()? {
+        Object::Integer(3) => Ok(()),
+        v => panic!("unexpected value: {}", eval.store().display(v)),
+    }
+}
+
+#[test]
+fn add_floats() -> Result<(), Error> {
+    let mut eval = EvalEnvironment::new();
+
+    eval.start("(+ 1.5 2.0)")?.eval()?;
+    match eval.result()? {
+        Object::Float(f) if f == 3.5 => Ok(()),
+        v => panic!("unexpected value: {}", eval.store().display(v)),
+    }
+}
+
+#[test]
+fn add_strings() -> Result<(), Error> {
+    let mut eval = EvalEnvironment::new();
+
+    eval.start(r#"(eqv? (+ "hello " "world") "hello world")"#)?
+        .eval()?;
+    let want = eval.store().put_symbol("#t");
+    assert_eq!(eval.result_ptr()?, want);
+    Ok(())
+}
+
+// (r#"(+ "hello" " " "world")"#, Object::Float(1.25)),
