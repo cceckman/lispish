@@ -38,4 +38,6 @@
       (foldl (proc init (car x)) (cdr x))
   )
 ))
-(define + (lambda (a z) (sys:add a z)))
+; TODO: There's something wrong with foldl or rest, I don't know what.
+(define + (lambda (a . z) (foldl sys:add a z)))
+(set! + (lambda (a z) (sys:add a z)))

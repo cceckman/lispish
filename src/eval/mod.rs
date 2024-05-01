@@ -304,6 +304,7 @@ impl EvalEnvironment {
             None => return Ok(Poll::Ready(())),
             Some(op) => op,
         };
+        tracing::trace!("operation: {}", op);
 
         match op {
             Op::EvalBody => {
@@ -457,7 +458,7 @@ impl EvalEnvironment {
                 // What do we need to do with them?
                 match self.store.get(applicator) {
                     Object::Builtin(f) => f(self)?,
-                    Object::Function(f) => {
+                    Object::Pair(f) => {
                         call(&mut self.op_stack, &self.store, f)?;
                     }
                     _ => {
@@ -652,7 +653,7 @@ fn get_location<'a>(
     symbol: Ptr<'a>,
     mut environment: Ptr<'a>,
 ) -> Result<Ptr<'a>, Error> {
-    assert!(symbol.is_symbol(), "pointer is: {}", symbol);
+    assert!(symbol.is_symbol(), "symbol pointer is: {}", symbol);
     // Environment is a stack of frames, which is a stack of bindings.
     while !environment.is_nil() {
         let mut frame: Ptr<'a>;

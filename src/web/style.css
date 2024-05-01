@@ -1,4 +1,3 @@
-
 main {
 	display: flex;
 	flex-direction: row;
@@ -7,7 +6,15 @@ main {
 	height: 100%;
 }
 
-main > div {
+#io p {
+	font-size: large;
+}
+
+#io textarea {
+	font-size: large;
+}
+
+main>div {
 	padding: 0.5em;
 }
 
@@ -44,7 +51,7 @@ div.historyline {
 	font-family: monospace;
 }
 
-.heap{
+.heap {
 	display: flex;
 	flex-direction: column;
 	width: 100%;
@@ -52,7 +59,7 @@ div.historyline {
 	overflow: hidden;
 }
 
-.heap-display{
+.heap-display {
 	overflow: scroll;
 }
 

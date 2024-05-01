@@ -121,7 +121,7 @@ impl Session {
                     }
                     body {
                         main {
-                            div {
+                            div id="io" {
                                 h3 { "Expressions" }
                                 form method="post" {
                                     table class="history" {

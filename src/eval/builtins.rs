@@ -154,7 +154,7 @@ fn builtin_lambda(eval: &mut EvalEnvironment) -> Result<(), Error> {
     }
 
     // Function object re-uses the tail: (environment, parameters, body...)
-    let obj = eval.store.put(Object::Function(Pair::cons(env, tail)));
+    let obj = eval.store.put(Object::Pair(Pair::cons(env, tail)));
     push(&eval.store, obj);
     Ok(())
 }
