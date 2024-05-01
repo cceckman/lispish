@@ -117,7 +117,7 @@ fn create_id_lambda() {
     .unwrap();
 
     match eval.eval().unwrap() {
-        Object::Function(_) => (),
+        Object::Pair(_) => (),
         v => panic!("unexpected value: {v:?}"),
     }
 }

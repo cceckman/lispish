@@ -75,7 +75,7 @@ fn render_node<'a>(
         }
         Object::Symbol(v) => single_value(store.get_symbol(v)),
         Object::Builtin(fptr) => single_value(format!("{fptr:p}")),
-        Object::Pair(Pair { car, cdr }) | Object::Function(Pair { car, cdr }) => maud::html!(
+        Object::Pair(Pair { car, cdr }) => maud::html!(
                     td port="car" { (car) }
                     td port="cdr" { (cdr) }
         ),
@@ -97,7 +97,7 @@ fn render_node<'a>(
 
     // After completing the node, make the outbound edges.
     let mut result = Vec::new();
-    if let Object::Pair(Pair { car, cdr }) | Object::Function(Pair { car, cdr }) = obj {
+    if let Object::Pair(Pair { car, cdr }) = obj {
         for (ptr, port) in [(car, car_port), (cdr, cdr_port)] {
             if ptr.is_nil() {
                 continue;

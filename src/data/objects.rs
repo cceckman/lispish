@@ -15,7 +15,6 @@ pub enum Object<'a> {
     String(LString<'a>) = StoredPtr::TAG_STRING,
     Symbol(Symbol) = StoredPtr::TAG_SYMBOL,
     Pair(Pair<'a>) = StoredPtr::TAG_PAIR,
-    Function(Pair<'a>) = StoredPtr::TAG_FUNCTION,
     Builtin(Builtin) = StoredPtr::TAG_BUILTIN,
 }
 
@@ -41,7 +40,6 @@ impl std::fmt::Display for StoredPtr {
             StoredPtr::TAG_STRING => "str",
             StoredPtr::TAG_SYMBOL => "sym",
             StoredPtr::TAG_PAIR => "obj",
-            StoredPtr::TAG_FUNCTION => "fun",
             StoredPtr::TAG_BUILTIN => "sys",
             _ => "???",
         };
@@ -60,7 +58,6 @@ impl std::str::FromStr for StoredPtr {
                 "str" => StoredPtr::TAG_STRING,
                 "sym" => StoredPtr::TAG_SYMBOL,
                 "obj" => StoredPtr::TAG_PAIR,
-                "fun" => StoredPtr::TAG_FUNCTION,
                 "sys" => StoredPtr::TAG_BUILTIN,
                 _ => return Err(format!("invalid tag {}", tag)),
             };
@@ -209,15 +206,6 @@ impl From<Object<'_>> for (StoredValue, u8) {
                 },
                 object.tag(),
             ),
-            Object::Function(p) => (
-                StoredValue {
-                    pair: StoredPair {
-                        car: p.car.raw,
-                        cdr: p.cdr.raw,
-                    },
-                },
-                object.tag(),
-            ),
             Object::Builtin(f) => (StoredValue { builtin: f }, object.tag()),
         }
     }
@@ -253,7 +241,6 @@ impl<'a> Object<'a> {
                 Object::Symbol(Symbol(DefaultSymbol::try_from_usize(p.idx()).unwrap()))
             }
             StoredPtr::TAG_PAIR => Object::Pair(bind(unsafe { v.pair })),
-            StoredPtr::TAG_FUNCTION => Object::Function(bind(unsafe { v.pair })),
             StoredPtr::TAG_BUILTIN => Object::Builtin(unsafe { v.builtin }),
             _ => panic!("invalid tag, possible data corruption"),
         }

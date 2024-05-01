@@ -288,7 +288,6 @@ impl Storage {
             Object::String(j) => format!("\"{}\"", &String::from_utf8_lossy(&self.get_string(&j))),
             Object::Symbol(j) => format!("{}", self.get_symbol(j)),
             Object::Pair(Pair { car, cdr }) => format!("({car}, {cdr})"),
-            Object::Function(Pair { car, cdr }) => format!("call ({car}, {cdr})"),
             Object::Builtin(f) => format!("fn {f:p}"),
         }
     }
@@ -453,7 +452,7 @@ union StoredValue {
 
 impl StoredValue {
     fn recursable(&self, ptr: StoredPtr) -> Option<StoredPair> {
-        if ptr.is_pair() || ptr.is_function() {
+        if ptr.is_pair() {
             Some(unsafe { self.pair })
         } else {
             None
@@ -489,7 +488,8 @@ impl StoredPtr {
     const TAG_FLOAT: u8 = 3;
     const TAG_SYMBOL: u8 = 4;
     const TAG_PAIR: u8 = 5;
-    const TAG_FUNCTION: u8 = 6;
+    // TODO: Can we use tag 6 for "compiled function"?
+    // Or do we even need that, once we get strings into the lisp store?
     const TAG_BUILTIN: u8 = 7;
 
     fn new(idx: usize, tag: u8) -> Self {
@@ -532,10 +532,6 @@ impl StoredPtr {
     #[inline]
     fn is_pair(&self) -> bool {
         self.tag() == StoredPtr::TAG_PAIR
-    }
-    #[inline]
-    fn is_function(&self) -> bool {
-        self.tag() == StoredPtr::TAG_FUNCTION
     }
 
     #[inline]
