@@ -516,55 +516,61 @@ impl EvalEnvironment {
                 // Note: Leaving the environment on the stack, it's also our return value.
                 let environment = peek(&self.store)?;
 
-                let Pair {
-                    car: sym,
-                    cdr: next_symbols,
-                } = get_pair(&self.store, symbols)?;
-
-                // Check for the special-case: is there a "rest" argument?
-                if sym == self.store.put_symbol(".") {
-                    // Bind "values" to the next, final argument.
-                    let Pair {
-                        car: rest,
-                        cdr: after_rest,
-                    } = get_pair(&self.store, symbols)?;
-                    if !rest.is_symbol() {
-                        return Err(Error::UserError(format!(
-                            "{} is not an acceptable rest parameter",
-                            self.store.display(self.store.get(rest))
-                        )));
+                // End of arg list.
+                if symbols.is_nil() {
+                    if !values.is_nil() {
+                        return Err(Error::UserError("too many arguments".to_string()));
                     }
-                    if !after_rest.is_nil() {
-                        return Err(Error::UserError(format!(
-                            "{} cannot be used after rest parameter",
-                            self.store.display(self.store.get(rest))
-                        )));
-                    }
-                    // OK, have sane arguments. Bind once:
-                    push(&self.store, environment);
-                    push(&self.store, rest);
-                    push(&self.store, values);
                 } else {
                     let Pair {
-                        car: value,
-                        cdr: next_values,
-                    } = get_pair(&self.store, values).to_user_error("not enough parameters")?;
-                    if !next_symbols.is_nil() {
+                        car: sym,
+                        cdr: next_symbols,
+                    } = get_pair(&self.store, symbols)?;
+
+                    // Check for the special-case: is there a "rest" argument?
+                    if sym == self.store.put_symbol(".") {
+                        // Bind "values" to the next, final argument.
+                        let Pair {
+                            car: rest,
+                            cdr: nil_tail,
+                        } = get_pair(&self.store, next_symbols)?;
+                        if !rest.is_symbol() {
+                            return Err(Error::UserError(format!(
+                                "{} is not an acceptable rest parameter",
+                                self.store.display(self.store.get(rest))
+                            )));
+                        }
+                        if !nil_tail.is_nil() {
+                            return Err(Error::UserError(format!(
+                                "{} cannot be used after rest parameter",
+                                self.store.display(self.store.get(nil_tail))
+                            )));
+                        }
+                        // OK, have sane arguments. Bind once, with "the rest":
+                        push(&self.store, environment);
+                        push(&self.store, rest);
+                        push(&self.store, values);
+                    } else {
+                        let Pair {
+                            car: value,
+                            cdr: next_values,
+                        } = get_pair(&self.store, values).to_user_error("not enough parameters")?;
                         // Prepare the next BindArgs.
                         // Environment is already on the stack:
                         push(&self.store, next_symbols);
                         push(&self.store, next_values);
+                        // Prepare Bind.
+                        push(&self.store, environment);
+                        push(&self.store, sym);
+                        push(&self.store, value);
+                        // Recurse to the rest of the list.
                         self.op_stack.push(Op::BindArgs);
                     }
-                    // Prepare Bind.
-                    push(&self.store, environment);
-                    push(&self.store, sym);
-                    push(&self.store, value);
+                    // Bind leaves the symbol on the stack, which isn't necessary for args.
+                    // Discard the symbol after binding.
+                    self.op_stack.push(Op::Discard);
+                    self.op_stack.push(Op::Bind);
                 }
-                // Bind leaves the symbol on the stack, which isn't necessary for args.
-                // Discard the symbol after binding.
-                self.op_stack.push(Op::Discard);
-                self.op_stack.push(Op::Bind);
             }
         }
         Ok(Poll::Pending)
@@ -646,6 +652,7 @@ fn get_location<'a>(
     symbol: Ptr<'a>,
     mut environment: Ptr<'a>,
 ) -> Result<Ptr<'a>, Error> {
+    assert!(symbol.is_symbol(), "pointer is: {}", symbol);
     // Environment is a stack of frames, which is a stack of bindings.
     while !environment.is_nil() {
         let mut frame: Ptr<'a>;
@@ -799,5 +806,31 @@ mod tests {
             Object::Integer(4) => (),
             v => panic!("unexpected result: {v:?}"),
         };
+    }
+
+    #[test]
+    fn require_all_args() {
+        let mut eval = EvalEnvironment::new();
+        const TEXT: &str = r#"
+            (define foo (lambda (a b) a))
+            (foo 1)
+        "#;
+        eval.start(TEXT)
+            .unwrap()
+            .eval()
+            .expect_err("should complain about missing args");
+    }
+
+    #[test]
+    fn require_only_args() {
+        let mut eval = EvalEnvironment::new();
+        const TEXT: &str = r#"
+            (define foo (lambda (a b) a))
+            (foo 1 2 3)
+        "#;
+        eval.start(TEXT)
+            .unwrap()
+            .eval()
+            .expect_err("should complain about too many args");
     }
 }

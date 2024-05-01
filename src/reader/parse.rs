@@ -55,7 +55,6 @@ pub fn parse(store: &Storage, input: impl Iterator<Item = TokenOffset>) -> ReadR
                 }
                 acc.into()
             }
-            Token::Dot => todo!(),
             Token::Quote => todo!(),
         };
         stack.push(top);

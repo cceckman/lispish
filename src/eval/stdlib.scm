@@ -14,15 +14,28 @@
 (define car (lambda (a) (sys:car a)))
 (define cdr (lambda (a) (sys:cdr a)))
 
-;; (define foldl (
-;;   lambda (proc init x)
-;;   ; TODO: Use a let-expression here
-;;   (if (eq? (x) ())
-;;       (init)
-;;       (foldl (proc init (car x)) (cdr x))
-;;   )
-;; ))
-;; (define + (
-;;   lambda (a . z)
-;;   (foldl sys:add a z)
-;; ))
+
+; Boolean operators:
+(define not (lambda (a)
+(if a #f #t)
+))
+
+(define and (lambda (a b)
+(if a b #f)
+))
+(define or (lambda (a b)
+(if a a b)
+))
+(define xor (lambda (a b)
+(not (eq? a b))
+))
+
+
+(define foldl (
+  lambda (proc init x)
+  (if (eq? x ())
+      (init)
+      (foldl (proc init (car x)) (cdr x))
+  )
+))
+(define + (lambda (a z) (sys:add a z)))

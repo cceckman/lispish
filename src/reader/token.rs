@@ -10,7 +10,6 @@ use crate::{data, reader::*};
 pub enum Token {
     LParen,
     RParen,
-    Dot,
     Quote,
     String(String),
     Symbol(String),
@@ -129,7 +128,7 @@ mod regex {
     pub(super) fn symbol() -> &'static Regex {
         static MATCH: OnceLock<Regex> = OnceLock::new();
         MATCH.get_or_init(|| {
-            Regex::new(r#"\A[^;[:space:]'()."]+"#).expect("could not compile regex for symbol")
+            Regex::new(r#"\A[^;[:space:]'()"]+"#).expect("could not compile regex for symbol")
         })
     }
 
@@ -170,7 +169,6 @@ fn get_next_token(input: &[u8]) -> ReadResult<NextToken<'_>> {
         b'(' => Some(Token::LParen),
         b')' => Some(Token::RParen),
         b'\'' => Some(Token::Quote),
-        b'.' => Some(Token::Dot),
         _ => None,
     } {
         return Ok(NextToken {
@@ -347,6 +345,28 @@ mod tests {
         }
         Ok(())
     }
+
+    #[test]
+    fn dot_is_symbol() -> Result<(), ReadErr> {
+        let input = br#"(a . z)"#;
+        let output: Vec<Token> = tokenize(input)?.into_iter().map(|v| v.token).collect();
+
+        let want = &[
+            Token::LParen,
+            Token::Symbol("a".to_string()),
+            Token::Symbol(".".to_string()),
+            Token::Symbol("z".to_string()),
+            Token::RParen,
+        ];
+
+        assert_eq!(output.len(), want.len());
+
+        for ((i, got), want) in output.iter().enumerate().zip(want.iter()) {
+            assert_eq!(got, want, "unexpected token in case {}", i);
+        }
+        Ok(())
+    }
+
     #[test]
     fn tokenize_parens() -> Result<(), ReadErr> {
         let input = b"(1)( 2 ) (hello) ( hello (\"hi\") (( \"hi\" )))";

@@ -365,7 +365,7 @@ fn builtin_sys_car(eval: &mut EvalEnvironment) -> Result<(), Error> {
     let [a] = get_args(eval, env, tail)?;
 
     let Pair { car, .. } =
-        get_pair(eval.store(), a).to_user_error("argument of car is not a pair".to_string())?;
+        get_pair(eval.store(), a).to_user_error("argument of car is not a pair")?;
     push(eval.store(), car);
     Ok(())
 }
@@ -377,7 +377,7 @@ fn builtin_sys_cdr(eval: &mut EvalEnvironment) -> Result<(), Error> {
     let [a] = get_args(eval, env, tail)?;
 
     let Pair { cdr, .. } =
-        get_pair(eval.store(), a).to_user_error("argument of cdr is not a pair".to_string())?;
+        get_pair(eval.store(), a).to_user_error("argument of cdr is not a pair")?;
     push(eval.store(), cdr);
     Ok(())
 }
@@ -386,21 +386,22 @@ fn builtin_sys_cdr(eval: &mut EvalEnvironment) -> Result<(), Error> {
 // A nice thing about this: we can assume the arguments
 // have already been evaluated.
 fn builtin_sys_add(eval: &mut EvalEnvironment) -> Result<(), Error> {
-    let _env = pop(eval.store())?;
-    let args = pop(eval.store())?;
-
-    let Pair { car: a, cdr: next } =
-        get_pair(eval.store(), args).to_user_error("missing argument to +")?;
-    let Pair { car: b, .. } =
-        get_pair(eval.store(), next).to_user_error("missing argument to +")?;
+    let env = pop(eval.store())?;
+    let tail = pop(eval.store())?;
+    let [a, b] = get_args(eval, env, tail)?;
 
     let result = match (eval.store().get(a), eval.store.get(b)) {
         (Object::Integer(a), Object::Integer(b)) => eval.store.put(a + b),
         (Object::Float(a), Object::Float(b)) => eval.store.put(a + b),
         (Object::String(a), Object::String(b)) => {
-            let a = eval.store().get_string(&a);
-            let b = eval.store().get_string(&b);
-            let new: Vec<u8> = a.iter().cloned().chain(b.iter().cloned()).collect();
+            // get_string takes a lease on the _underlying string store_,
+            // and put_string takes it.
+            // We have to release our string Refs before we can put_string.
+            let new: Vec<u8> = {
+                let a = eval.store().get_string(&a);
+                let b = eval.store().get_string(&b);
+                a.iter().cloned().chain(b.iter().cloned()).collect()
+            };
             eval.store().put_string(&new)
         }
         _ => {
