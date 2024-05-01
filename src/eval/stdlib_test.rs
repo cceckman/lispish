@@ -366,3 +366,58 @@ fn pair_ops() -> Result<(), Error> {
 
     Ok(())
 }
+
+#[test]
+fn if_else() -> Result<(), Error> {
+    let mut eval = EvalEnvironment::new();
+
+    for expr in [
+        r#"
+            (if (eqv? 1 1.0) #f #t)
+        "#,
+        r#"
+            ; Test short-circuiting of else:
+            (define x 1)
+            (if #t (set! x #t) (set! x #f))
+            x
+        "#,
+    ] {
+        eval.start(expr)?.eval()?;
+        let got = eval.result_ptr()?;
+        let want = eval.store().put_symbol("#t");
+        assert_eq!(
+            got, want,
+            "unexpected result from {}: got: {} want: {}",
+            expr, got, want
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn skip_if_block() -> Result<(), Error> {
+    let mut eval = EvalEnvironment::new();
+
+    const EXPR: &str = r#"
+            ; Test short-circuiting of the positive case:
+            (define x 1)
+            (if #f (set! x #t) (define y 9))
+        "#;
+
+    eval.start(EXPR)?.eval()?;
+    // Check the "else" branch ran:
+    eval.start("y")?.eval()?;
+    match eval.result()? {
+        Object::Integer(9) => (),
+        v => panic!("unexpected result: {}", eval.store.display(v)),
+    }
+    // Check the "if" branch didn't:
+    eval.start("x")?.eval()?;
+    match eval.result()? {
+        Object::Integer(1) => (),
+        v => panic!("unexpected result: {}", eval.store.display(v)),
+    }
+
+    Ok(())
+}

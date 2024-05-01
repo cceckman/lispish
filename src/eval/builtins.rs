@@ -26,7 +26,7 @@ pub const BUILTINS: &[(&str, Builtin)] = &[
     ("list", builtin_list),
     ("set!", builtin_set),
     ("quote", builtin_quote),
-    // ("if", builtin_if),
+    ("if", builtin_if),
     // ("cond", builtin_unimplemented),
     // ("apply", builtin_unimplemented),
 
@@ -48,38 +48,6 @@ pub const BUILTINS: &[(&str, Builtin)] = &[
     ("sys:eqv?", builtin_sys_eqv),
     ("sys:add", builtin_sys_add),
 ];
-
-// A two-argument system function backing the "+" operator.
-// A nice thing about this: we can assume the arguments
-// have already been evaluated.
-fn builtin_sys_add(eval: &mut EvalEnvironment) -> Result<(), Error> {
-    let _env = pop(eval.store())?;
-    let args = pop(eval.store())?;
-
-    let Pair { car: a, cdr: next } =
-        get_pair(eval.store(), args).to_user_error("missing argument to +")?;
-    let Pair { car: b, .. } =
-        get_pair(eval.store(), next).to_user_error("missing argument to +")?;
-
-    let result = match (eval.store().get(a), eval.store.get(b)) {
-        (Object::Integer(a), Object::Integer(b)) => eval.store.put(a + b),
-        (Object::Float(a), Object::Float(b)) => eval.store.put(a + b),
-        (Object::String(a), Object::String(b)) => {
-            let a = eval.store().get_string(&a);
-            let b = eval.store().get_string(&b);
-            let new: Vec<u8> = a.iter().cloned().chain(b.iter().cloned()).collect();
-            eval.store().put_string(&new)
-        }
-        _ => {
-            return Err(Error::UserError(format!(
-                "incompatible arguments: {a} + {b} has mismatched types"
-            )))
-        }
-    };
-
-    push(eval.store(), result);
-    Ok(())
-}
 
 fn builtin_define(eval: &mut EvalEnvironment) -> Result<(), Error> {
     let env = pop(eval.store())?;
@@ -251,6 +219,49 @@ fn builtin_quote(eval: &mut EvalEnvironment) -> Result<(), Error> {
     Ok(())
 }
 
+fn builtin_if(eval: &mut EvalEnvironment) -> Result<(), Error> {
+    let env = pop(eval.store())?;
+    let tail = pop(eval.store())?;
+
+    // Three expressions in the tail:
+    // - Predicate
+    // - Positive case
+    // - Negative case
+    let Pair {
+        car: predicate,
+        cdr: tail,
+    } = get_pair(&eval.store, tail).to_user_error("missing predicate of if")?;
+    let Pair {
+        car: pos,
+        cdr: tail,
+    } = get_pair(&eval.store, tail).to_user_error("missing positive case of if")?;
+    let Pair {
+        car: neg,
+        cdr: nil_tail,
+    } = get_pair(&eval.store, tail).to_user_error("missing negative case of if")?;
+    if !nil_tail.is_nil() {
+        return Err(Error::UserError(
+            "if expression takes three arguments: predicate, positive, negative".to_string(),
+        ));
+    }
+
+    // Our steps are:
+    // - Evaluate the predicate expression
+    // - EvalCond
+    // Set up EvalCond arguments first:
+    push(eval.store(), neg);
+    push(eval.store(), pos);
+    push(eval.store(), env);
+    // Then predicate:
+    push(eval.store(), predicate);
+    push(eval.store(), env);
+
+    eval.op_stack.push(Op::EvalCond);
+    eval.op_stack.push(Op::EvalExpr);
+
+    Ok(())
+}
+
 /// Get two arguments to a sys: builtin.
 ///
 /// `sys:`-type builtins, backed by functions, have symbolic arguments
@@ -368,5 +379,37 @@ fn builtin_sys_cdr(eval: &mut EvalEnvironment) -> Result<(), Error> {
     let Pair { cdr, .. } =
         get_pair(eval.store(), a).to_user_error("argument of cdr is not a pair".to_string())?;
     push(eval.store(), cdr);
+    Ok(())
+}
+
+// A two-argument system function backing the "+" operator.
+// A nice thing about this: we can assume the arguments
+// have already been evaluated.
+fn builtin_sys_add(eval: &mut EvalEnvironment) -> Result<(), Error> {
+    let _env = pop(eval.store())?;
+    let args = pop(eval.store())?;
+
+    let Pair { car: a, cdr: next } =
+        get_pair(eval.store(), args).to_user_error("missing argument to +")?;
+    let Pair { car: b, .. } =
+        get_pair(eval.store(), next).to_user_error("missing argument to +")?;
+
+    let result = match (eval.store().get(a), eval.store.get(b)) {
+        (Object::Integer(a), Object::Integer(b)) => eval.store.put(a + b),
+        (Object::Float(a), Object::Float(b)) => eval.store.put(a + b),
+        (Object::String(a), Object::String(b)) => {
+            let a = eval.store().get_string(&a);
+            let b = eval.store().get_string(&b);
+            let new: Vec<u8> = a.iter().cloned().chain(b.iter().cloned()).collect();
+            eval.store().put_string(&new)
+        }
+        _ => {
+            return Err(Error::UserError(format!(
+                "incompatible arguments: {a} + {b} has mismatched types"
+            )))
+        }
+    };
+
+    push(eval.store(), result);
     Ok(())
 }
