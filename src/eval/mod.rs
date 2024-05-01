@@ -86,6 +86,17 @@ enum Op {
     // Postcondition: empty stack. Caller should Cdr the original accumulator value.
     EvalList,
 
+    // After evaluating the first argument, deal with rest of the form based on the result.
+    // Precondition: stack is (eval item, environment, tail of expression).
+    // Postcondition: stack is (value) of evaluating the form.
+    EvalForm,
+
+    // Depending on the value of the predicate, evaluate either the positive expression or the
+    // negative expression.
+    // Precondition: stack is (predicate, environment, positive expression, negative expresson).
+    // Postcondition: stack is (value) of evaluating the form.
+    EvalCond,
+
     // Append the expression on the top of the stack to the end of an accumulator.
     // Evaluates to the new tail.
     // Precondition: stack is (expression, accumulator)
@@ -98,11 +109,6 @@ enum Op {
     // Precondition: stack is (cons cell).
     // Postcondition: stack is (cdr of that cell).
     Cdr,
-
-    // After evaluating the first argument, deal with rest of the form based on the result.
-    // Precondition: stack is (eval item, environment, tail of expression).
-    // Postcondition: stack is (value) of evaluating the form.
-    EvalForm,
 
     // Add a variable to the provided environment.
     // Precondition: stack is (value, symbol, environment).
@@ -128,8 +134,9 @@ impl Display for Op {
             match self {
                 Op::EvalBody => "EvalBody",
                 Op::EvalExpr => "EvalExpr",
-                Op::EvalForm => "EvalForm",
                 Op::EvalList => "EvalList",
+                Op::EvalForm => "EvalForm",
+                Op::EvalCond => "EvalCond",
                 Op::Append => "Append",
                 Op::Discard => "Discard",
                 Op::Cdr => "Cdr",
@@ -393,6 +400,26 @@ impl EvalEnvironment {
                     Object::Nil => (),
                     _ => return Err(Error::Fault("EvalList with non-list body".to_string())),
                 }
+            }
+            Op::EvalCond => {
+                let predicate = pop(&self.store)?;
+                let env = pop(&self.store)?;
+                let pos = pop(&self.store)?;
+                let neg = pop(&self.store)?;
+
+                let t = self.store.put_symbol("#t");
+                let f = self.store.put_symbol("#f");
+                match predicate {
+                    x if x == t => push(&self.store, pos),
+                    x if x == f => push(&self.store, neg),
+                    v => {
+                        return Err(Error::UserError(format!(
+                            "if predicate is not #t or #f: {v}"
+                        )))
+                    }
+                }
+                push(&self.store, env);
+                self.op_stack.push(Op::EvalExpr);
             }
             Op::Append => {
                 let expr = pop(&self.store)?;
