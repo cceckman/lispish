@@ -1,3 +1,5 @@
+use std::ops::{BitOr, BitXor};
+
 use crate::eval::{
     eval_list, get_pair, get_value, pop, push, Builtin, Error, EvalEnvironment, Object, Op,
     ToUserError,
@@ -16,6 +18,8 @@ pub const STDLIB: &str = include_str!("stdlib.scm");
 /// This means you _could_ do evil things like redefining "define"!
 /// Don't do that, though, please.
 pub const BUILTINS: &[(&str, Builtin)] = &[
+    // First: the forms.
+    // These don't necessarily _evaluate_ their arguments.
     ("define", builtin_define),
     ("begin", builtin_begin),
     ("lambda", builtin_lambda),
@@ -23,16 +27,25 @@ pub const BUILTINS: &[(&str, Builtin)] = &[
     ("set!", builtin_set),
     ("quote", builtin_quote),
     // ("if", builtin_if),
-    // ("car", builtin_car)
-    // ("cdr", builtin_cdr)
-    // ("cons", builtin_cons)
     // ("cond", builtin_unimplemented),
     // ("apply", builtin_unimplemented),
 
     // TODO: move this to "masked builtins"
-    // These act as system functions to back standard-library functions.
-    // sys:add is the function of two variables that backs the "+" operator.
+    //
+    // Second: backers of standard-library functions.
+    // The non-'sys' versions of these act like standard functions,
+    // but can't be implemented without these lower-level primitives.
+    //
+    // I don't want to duplicate the function-invocation/arg-eval code,
+    // since doing so would require new microops for the "completion"
+    // of each of these.
+    // Instead: we wrap these in a function, and rely on the args having
+    // already been evaluated.
+    ("sys:car", builtin_sys_car),
+    ("sys:cdr", builtin_sys_cdr),
+    ("sys:cons", builtin_sys_cons),
     ("sys:eq?", builtin_sys_eq),
+    ("sys:eqv?", builtin_sys_eqv),
     ("sys:add", builtin_sys_add),
 ];
 
@@ -238,25 +251,40 @@ fn builtin_quote(eval: &mut EvalEnvironment) -> Result<(), Error> {
     Ok(())
 }
 
-// Return true/false based on the (two) arguments' pointer equality.
-// Since this is a builtin, the "arguments" are the symbols bound by the lambda;
-// we need to look them up.
+/// Get two arguments to a sys: builtin.
+///
+/// `sys:`-type builtins, backed by functions, have symbolic arguments
+/// as specified by the `lambda` invocation.
+/// We have to look up the symbols used, and then look up the values
+/// in the environment.
+fn get_args<'a, const N: usize>(
+    eval: &'a EvalEnvironment,
+    env: Ptr<'a>,
+    mut tail: Ptr<'a>,
+) -> Result<[Ptr<'a>; N], Error> {
+    let mut ptrs = [Ptr::nil(); N];
+    for loc in ptrs.iter_mut() {
+        // We treat the below errors as faults
+        // because the wrapper lambda should
+        // use the right number of arguments.
+        let Pair {
+            car: sym,
+            cdr: new_tail,
+        } = get_pair(&eval.store, tail)?;
+        tail = new_tail;
+        *loc = get_value(eval.store(), sym, env)?;
+    }
+    // Self-check: we consumed all the arguments.
+    assert!(tail.is_nil());
+
+    Ok(ptrs)
+}
+
+/// Return true/false based on the (two) arguments' pointer equality.
 fn builtin_sys_eq(eval: &mut EvalEnvironment) -> Result<(), Error> {
     let env = pop(eval.store())?;
     let tail = pop(eval.store())?;
-
-    let Pair {
-        car: a_sym,
-        cdr: tail,
-    } = get_pair(&eval.store, tail)?;
-    let Pair {
-        car: b_sym,
-        cdr: nil_tail,
-    } = get_pair(&eval.store, tail)?;
-    assert!(nil_tail.is_nil());
-
-    let a = get_value(eval.store(), a_sym, env)?;
-    let b = get_value(eval.store(), b_sym, env)?;
+    let [a, b] = get_args(eval, env, tail)?;
 
     let symbol = if a == b {
         eval.store().put_symbol("#t")
@@ -264,5 +292,81 @@ fn builtin_sys_eq(eval: &mut EvalEnvironment) -> Result<(), Error> {
         eval.store().put_symbol("#f")
     };
     push(eval.store(), symbol);
+    Ok(())
+}
+
+/// Return true/false based on the (two) arguments' value equality.
+fn builtin_sys_eqv(eval: &mut EvalEnvironment) -> Result<(), Error> {
+    let env = pop(eval.store())?;
+    let tail = pop(eval.store())?;
+    let [a, b] = get_args(eval, env, tail)?;
+    let symbol = if a == b {
+        "#t"
+    } else {
+        let a_val = eval.store().get(a);
+        let b_val = eval.store().get(b);
+
+        match (a_val, b_val) {
+            (Object::Integer(a), Object::Integer(b)) if a == b => "#t",
+            (Object::Float(a), Object::Float(b)) if a == b => "#t",
+            (Object::String(ref a), Object::String(ref b)) => {
+                let a = eval.store().get_string(a);
+                let b = eval.store().get_string(b);
+                // Do a constant-in-length comparison;
+                // takes longer, but if we accidentally use this for something sensitive, oops.
+                // XOR each pair of bytes; OR the differences into the accumulator.
+                // If any bits are different, we'll have a nonzero answer.
+                let result = a
+                    .as_ref()
+                    .iter()
+                    .cloned()
+                    .zip(b.as_ref().iter().cloned())
+                    .fold(0u8, |acc, (a, b)| acc.bitor(a.bitxor(b)));
+                if result == 0 {
+                    "#t"
+                } else {
+                    "#f"
+                }
+            }
+            (_, _) => "#f",
+        }
+    };
+
+    let p = eval.store().put_symbol(symbol);
+    push(eval.store(), p);
+    Ok(())
+}
+
+/// Create a new `cons` cell.
+fn builtin_sys_cons(eval: &mut EvalEnvironment) -> Result<(), Error> {
+    let env = pop(eval.store())?;
+    let tail = pop(eval.store())?;
+    let [a, b] = get_args(eval, env, tail)?;
+    let pair = eval.store().put(Pair::cons(a, b));
+    push(eval.store(), pair);
+    Ok(())
+}
+
+/// Get the `car` of the cell.
+fn builtin_sys_car(eval: &mut EvalEnvironment) -> Result<(), Error> {
+    let env = pop(eval.store())?;
+    let tail = pop(eval.store())?;
+    let [a] = get_args(eval, env, tail)?;
+
+    let Pair { car, .. } =
+        get_pair(eval.store(), a).to_user_error("argument of car is not a pair".to_string())?;
+    push(eval.store(), car);
+    Ok(())
+}
+
+/// Get the `cdr` of the cell.
+fn builtin_sys_cdr(eval: &mut EvalEnvironment) -> Result<(), Error> {
+    let env = pop(eval.store())?;
+    let tail = pop(eval.store())?;
+    let [a] = get_args(eval, env, tail)?;
+
+    let Pair { cdr, .. } =
+        get_pair(eval.store(), a).to_user_error("argument of cdr is not a pair".to_string())?;
+    push(eval.store(), cdr);
     Ok(())
 }

@@ -275,6 +275,8 @@ fn eq() -> Result<(), Error> {
         ("(eq? (list 1 2) (list 1 2))", false),
         ("(eq? 1.3 1.1)", false),
         ("(eq? 1.0 1.0)", false),
+        (r#"(eq? "hello everyone" "hello everybody")"#, false),
+        (r#"(eq? "hello world" "hello world")"#, false),
         ("(eq? (lambda (x) x) (lambda (x) x))", false),
         ("(define id (lambda (x) x)) (eq? id id)", true),
         (
@@ -286,6 +288,75 @@ fn eq() -> Result<(), Error> {
         eval.start(expr)?.eval()?;
         let got = eval.result_ptr()?;
         let want = eval.store().put_symbol(if expect { "#t" } else { "#f" });
+        assert_eq!(
+            got, want,
+            "unexpected result from {}: got: {} want: {}",
+            expr, got, want
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn eqv() -> Result<(), Error> {
+    let mut eval = EvalEnvironment::new();
+
+    for (expr, expect) in [
+        ("(eqv? () ())", true),
+        ("(eqv? 1 2)", false),
+        ("(eqv? 1 1)", true),
+        ("(eqv? 1.0 1)", false),
+        ("(eqv? (quote a) (quote b))", false),
+        ("(eqv? (quote a) (quote a))", true),
+        ("(eqv? (list 1 2) (list 1 2))", false),
+        (r#"(eqv? "hello everyone" "hello everybody")"#, false),
+        (r#"(eqv? "hello world" "hello world")"#, true),
+        ("(eqv? 1.3 1.1)", false),
+        ("(eqv? 1.0 1.0)", true),
+        ("(eqv? (lambda (x) x) (lambda (x) x))", false),
+        ("(define id (lambda (x) x)) (eq? id id)", true),
+        (
+            "(define id1 (lambda (x) x)) (define id2 (lambda (x) x)) (eq? id1 id2)",
+            false,
+        ),
+        (r#"(eq? "hello" "hello")"#, false),
+    ] {
+        eval.start(expr)?.eval()?;
+        let got = eval.result_ptr()?;
+        let want_str = if expect { "#t" } else { "#f" };
+        let want = eval.store().put_symbol(want_str);
+        assert_eq!(
+            got, want,
+            "unexpected result from {}: got: {} want: {}",
+            expr, got, want
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn pair_ops() -> Result<(), Error> {
+    let mut eval = EvalEnvironment::new();
+
+    for expr in [
+        "(eq? (car (list (quote q))) (quote q))",
+        r#"
+            (define x (cons 1 2))
+            (eqv? (car x) 1)
+        "#,
+        r#"
+            (define x (cons 1 2))
+            (eqv? (cdr x) 2)
+        "#,
+        r#"
+            (define x (list 1 2 3.0 4))
+            (eqv? (car (cdr (cdr x))) 3.0)
+        "#,
+    ] {
+        eval.start(expr)?.eval()?;
+        let got = eval.result_ptr()?;
+        let want = eval.store().put_symbol("#t");
         assert_eq!(
             got, want,
             "unexpected result from {}: got: {} want: {}",
