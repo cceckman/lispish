@@ -152,6 +152,7 @@ impl Display for Op {
 pub struct EvalEnvironment {
     op_stack: Vec<Op>,
     store: Storage,
+    completed_ops: usize,
 }
 
 impl Default for EvalEnvironment {
@@ -189,6 +190,7 @@ impl EvalEnvironment {
         let mut env = EvalEnvironment {
             op_stack: Vec::new(),
             store,
+            completed_ops: 0,
         };
 
         // TODO: Split into multiple environments-
@@ -304,7 +306,8 @@ impl EvalEnvironment {
             None => return Ok(Poll::Ready(())),
             Some(op) => op,
         };
-        tracing::trace!("operation: {}", op);
+        tracing::trace!("operation {}: {}", self.completed_ops, op);
+        self.completed_ops += 1;
 
         match op {
             Op::EvalBody => {
@@ -602,9 +605,9 @@ fn call(ops: &mut Vec<Op>, store: &Storage, function: Pair) -> Result<(), Error>
 
     // The last thing we do is evaluate the body in the "eval" environment.
     ops.push(Op::EvalBody);
-    push(&store, body);
+    push(store, body);
     let new_env = store.put(Pair::cons(Ptr::nil(), lex_env));
-    push(&store, new_env);
+    push(store, new_env);
     // Before that, we need to fill the "eval" environment.
     // It's already in the right place on the stack, and will be conserved;
     // push the op and the symbols:

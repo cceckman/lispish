@@ -34,10 +34,29 @@
 (define foldl (
   lambda (proc init x)
   (if (eq? x ())
-      (init)
-      (foldl (proc init (car x)) (cdr x))
+      init
+      (foldl proc (proc init (car x)) (cdr x))
   )
 ))
-; TODO: There's something wrong with foldl or rest, I don't know what.
-(define + (lambda (a . z) (foldl sys:add a z)))
-(set! + (lambda (a z) (sys:add a z)))
+;
+; We have to be careful here.
+; If `proc` is system function, then when we invoke `proc` in foldl
+; we won't have yet evaluated the arguments.
+(define + (lambda (a . z)
+  (begin
+    (define add2 (lambda (a b) (sys:add a b)))
+    (foldl add2 a z)
+  )
+))
+
+(define * (lambda (a . z)
+  (begin
+    (define mul2 (lambda (a b) (sys:mul a b)))
+    (foldl mul2 a z)
+  )
+))
+
+(define - (lambda (a b) (sys:sub a b)))
+(define / (lambda (a b) (sys:div a b)))
+
+; (set! + (lambda (a z) (sys:add a z)))

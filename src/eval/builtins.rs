@@ -47,6 +47,9 @@ pub const BUILTINS: &[(&str, Builtin)] = &[
     ("sys:eq?", builtin_sys_eq),
     ("sys:eqv?", builtin_sys_eqv),
     ("sys:add", builtin_sys_add),
+    ("sys:sub", builtin_sys_sub),
+    ("sys:mul", builtin_sys_mul),
+    ("sys:div", builtin_sys_div),
 ];
 
 fn builtin_define(eval: &mut EvalEnvironment) -> Result<(), Error> {
@@ -406,7 +409,79 @@ fn builtin_sys_add(eval: &mut EvalEnvironment) -> Result<(), Error> {
         }
         _ => {
             return Err(Error::UserError(format!(
-                "incompatible arguments: {a} + {b} has mismatched types"
+                "incompatible arguments: {a} + {b} cannot be added"
+            )))
+        }
+    };
+
+    push(eval.store(), result);
+    Ok(())
+}
+
+// A two-argument system function backing the "-" operator.
+// A nice thing about this: we can assume the arguments
+// have already been evaluated.
+fn builtin_sys_sub(eval: &mut EvalEnvironment) -> Result<(), Error> {
+    let env = pop(eval.store())?;
+    let tail = pop(eval.store())?;
+    let [a, b] = get_args(eval, env, tail)?;
+
+    let result = match (eval.store().get(a), eval.store.get(b)) {
+        (Object::Integer(a), Object::Integer(b)) => eval.store.put(a - b),
+        (Object::Float(a), Object::Float(b)) => eval.store.put(a - b),
+        _ => {
+            return Err(Error::UserError(format!(
+                "incompatible arguments: {a} - {b} cannot be subtracted"
+            )))
+        }
+    };
+
+    push(eval.store(), result);
+    Ok(())
+}
+
+// A two-argument system function backing the "*" operator.
+// A nice thing about this: we can assume the arguments
+// have already been evaluated.
+fn builtin_sys_mul(eval: &mut EvalEnvironment) -> Result<(), Error> {
+    let env = pop(eval.store())?;
+    let tail = pop(eval.store())?;
+    let [a, b] = get_args(eval, env, tail)?;
+
+    let result = match (eval.store().get(a), eval.store.get(b)) {
+        (Object::Integer(a), Object::Integer(b)) => eval.store.put(a * b),
+        (Object::Float(a), Object::Float(b)) => eval.store.put(a * b),
+        _ => {
+            return Err(Error::UserError(format!(
+                "incompatible arguments: {a} * {b} cannot be multiplied"
+            )))
+        }
+    };
+
+    push(eval.store(), result);
+    Ok(())
+}
+
+// A two-argument system function backing the "/" operator.
+// A nice thing about this: we can assume the arguments
+// have already been evaluated.
+fn builtin_sys_div(eval: &mut EvalEnvironment) -> Result<(), Error> {
+    let env = pop(eval.store())?;
+    let tail = pop(eval.store())?;
+    let [a, b] = get_args(eval, env, tail)?;
+
+    let result = match (eval.store().get(a), eval.store.get(b)) {
+        (_, Object::Integer(0)) => {
+            return Err(Error::UserError("cannot divide by zero".to_string()))
+        }
+        (_, Object::Float(b)) if b == 0.0 => {
+            return Err(Error::UserError("cannot divide by zero".to_string()))
+        }
+        (Object::Integer(a), Object::Integer(b)) => eval.store.put(a / b),
+        (Object::Float(a), Object::Float(b)) => eval.store.put(a / b),
+        _ => {
+            return Err(Error::UserError(format!(
+                "incompatible arguments: {a} / {b} cannot be divided"
             )))
         }
     };
