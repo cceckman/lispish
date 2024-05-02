@@ -460,9 +460,9 @@ fn xor() -> Result<(), Error> {
 fn add_ints() -> Result<(), Error> {
     let mut eval = EvalEnvironment::new();
 
-    eval.start("(+ 1 2)")?.eval()?;
+    eval.start("(+ 1 2 3)")?.eval()?;
     match eval.result()? {
-        Object::Integer(3) => Ok(()),
+        Object::Integer(6) => Ok(()),
         v => panic!("unexpected value: {}", eval.store().display(v)),
     }
 }
@@ -489,4 +489,101 @@ fn add_strings() -> Result<(), Error> {
     Ok(())
 }
 
-// (r#"(+ "hello" " " "world")"#, Object::Float(1.25)),
+#[test]
+fn sub_ints() -> Result<(), Error> {
+    let mut eval = EvalEnvironment::new();
+
+    eval.start("(- 1 2)")?.eval()?;
+    match eval.result()? {
+        Object::Integer(-1) => Ok(()),
+        v => panic!("unexpected value: {}", eval.store().display(v)),
+    }
+}
+
+#[test]
+fn sub_floats() -> Result<(), Error> {
+    let mut eval = EvalEnvironment::new();
+
+    eval.start("(- 1.5 2.0)")?.eval()?;
+    match eval.result()? {
+        Object::Float(f) if f == -0.5 => Ok(()),
+        v => panic!("unexpected value: {}", eval.store().display(v)),
+    }
+}
+
+#[test]
+fn sub_strings() {
+    let mut eval = EvalEnvironment::new();
+
+    match eval.start(r#"(- "hello " "world")"#).unwrap().eval() {
+        Err(Error::UserError(_)) => (),
+        v => panic!("error: cannot subtract strings, but got: {v:?}"),
+    }
+}
+
+#[test]
+fn mul_ints() -> Result<(), Error> {
+    let mut eval = EvalEnvironment::new();
+
+    eval.start("(* 1 -2 6)")?.eval()?;
+    match eval.result()? {
+        Object::Integer(-12) => Ok(()),
+        v => panic!("unexpected value: {}", eval.store().display(v)),
+    }
+}
+
+#[test]
+fn mul_floats() -> Result<(), Error> {
+    let mut eval = EvalEnvironment::new();
+
+    eval.start("(* -4.0 -2.0 3.0)")?.eval()?;
+    match eval.result()? {
+        Object::Float(b) if b == 24.0 => Ok(()),
+        v => panic!("unexpected value: {}", eval.store().display(v)),
+    }
+}
+
+#[test]
+fn div_ints() -> Result<(), Error> {
+    let mut eval = EvalEnvironment::new();
+
+    eval.start("(/ 4 2)")?.eval()?;
+    match eval.result()? {
+        Object::Integer(2) => Ok(()),
+        v => panic!("unexpected value: {}", eval.store().display(v)),
+    }
+}
+
+#[test]
+fn div_floats() -> Result<(), Error> {
+    let mut eval = EvalEnvironment::new();
+
+    eval.start("(/ 4.0 2.0)")?.eval()?;
+    match eval.result()? {
+        Object::Float(b) if b == 2.0 => Ok(()),
+        v => panic!("unexpected value: {}", eval.store().display(v)),
+    }
+}
+
+#[test]
+fn div_zero() {
+    let mut eval = EvalEnvironment::new();
+
+    match eval.start("(/ 4 0)").unwrap().eval() {
+        Err(Error::UserError(_)) => (),
+        Ok(_) => panic!("unexpected value"),
+        Err(_) => panic!("unexpected error"),
+    };
+
+    match eval.start("(/ 6.3 0.0)").unwrap().eval() {
+        Err(Error::UserError(_)) => (),
+        Ok(_) => panic!("unexpected value"),
+        Err(_) => panic!("unexpected error"),
+    }
+
+    match eval.start("(/ 6.3 -0.0)").unwrap().eval() {
+        Err(Error::UserError(_)) => (),
+        Ok(_) => panic!("unexpected value"),
+        Err(_) => panic!("unexpected error"),
+    }
+}

@@ -7,6 +7,7 @@ impl EvalEnvironment {
         Ok(maud::html!(
             div class="ops" {
                 h3 { "Op Stack" }
+                p { (self.completed_ops) " ops complete" }
                 table class="stack" {
                     @for op in self.op_stack.iter().rev() {
                         tr { td { (op) } }
