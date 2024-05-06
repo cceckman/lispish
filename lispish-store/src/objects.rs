@@ -2,17 +2,17 @@ use std::marker::PhantomData;
 
 use string_interner::{DefaultSymbol, Symbol as InternerSymbol};
 
-use super::{Bind, Storage, StoredPair, StoredPtr, StoredValue};
+use super::{Bind, Storage, StoredPair, StoredPtr, StoredValue, Tag};
 
 /// Enum for a Lisp object.
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
 pub enum Object<'a> {
-    Nil = StoredPtr::TAG_NIL,
-    Integer(Integer) = StoredPtr::TAG_INTEGER,
-    Float(Float) = StoredPtr::TAG_FLOAT,
-    Symbol(Symbol) = StoredPtr::TAG_SYMBOL,
-    Pair(Pair<'a>) = StoredPtr::TAG_PAIR,
+    Nil = Tag::Nil as u8,
+    Integer(Integer) = Tag::Integer as u8,
+    Float(Float) = Tag::Float as u8,
+    Symbol(Symbol) = Tag::Symbol as u8,
+    Pair(Pair<'a>) = Tag::Pair as u8,
 }
 
 /// An ID for a stored object: a combination of pointer and type-tag.
@@ -31,14 +31,14 @@ impl std::fmt::Display for Ptr<'_> {
 impl std::fmt::Display for StoredPtr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let tag = match self.tag() {
-            StoredPtr::TAG_NIL => "nil",
-            StoredPtr::TAG_INTEGER => "i64",
-            StoredPtr::TAG_FLOAT => "f64",
-            StoredPtr::TAG_SYMBOL => "sym",
-            StoredPtr::TAG_PAIR => "obj",
-            StoredPtr::TAG_BYTEVECTOR => "byt",
-            StoredPtr::TAG_VECTOR => "vec",
-            StoredPtr::TAG_STRING => "str",
+            Tag::Nil => "nil",
+            Tag::Integer => "i64",
+            Tag::Float => "f64",
+            Tag::Symbol => "sym",
+            Tag::Pair => "obj",
+            Tag::Bytes => "byt",
+            Tag::Vector => "vec",
+            Tag::String => "str",
             _ => "???",
         };
         write!(f, "{}#{}", tag, self.idx())
@@ -50,14 +50,14 @@ impl std::str::FromStr for StoredPtr {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if let Some((tag, number)) = s.split_once('#') {
             let tag = match tag {
-                "nil" => StoredPtr::TAG_NIL,
-                "i64" => StoredPtr::TAG_INTEGER,
-                "f64" => StoredPtr::TAG_FLOAT,
-                "sym" => StoredPtr::TAG_SYMBOL,
-                "obj" => StoredPtr::TAG_PAIR,
-                "vec" => StoredPtr::TAG_VECTOR,
-                "byt" => StoredPtr::TAG_BYTEVECTOR,
-                "str" => StoredPtr::TAG_STRING,
+                "nil" => Tag::Nil,
+                "i64" => Tag::Integer,
+                "f64" => Tag::Float,
+                "sym" => Tag::Symbol,
+                "obj" => Tag::Pair,
+                "vec" => Tag::Vector,
+                "byt" => Tag::Bytes,
+                "str" => Tag::String,
                 _ => return Err(format!("invalid tag {}", tag)),
             };
             let idx: usize = number
@@ -97,7 +97,7 @@ impl Ptr<'_> {
     }
 
     #[inline]
-    pub(super) fn tag(&self) -> u8 {
+    pub(super) fn tag(&self) -> Tag {
         self.raw.tag()
     }
 
@@ -123,13 +123,13 @@ impl Object<'_> {
         Ptr::default()
     }
 
-    pub(super) fn tag(&self) -> u8 {
+    pub(super) fn tag(&self) -> Tag {
         // From https://doc.rust-lang.org/std/mem/fn.discriminant.html:
         //
         // SAFETY: Because `Self` is marked `repr(u8)`, its layout is a `repr(C)` `union`
         // between `repr(C)` structs, each of which has the `u8` discriminant as its first
         // field, so we can read the discriminant without offsetting the pointer.
-        unsafe { *<*const _>::from(self).cast::<u8>() }
+        unsafe { *<*const _>::from(self).cast::<u8>() }.into()
     }
 }
 
@@ -168,7 +168,7 @@ impl<'a> TryInto<Pair<'a>> for Object<'a> {
     }
 }
 
-impl From<Object<'_>> for (StoredValue, u8) {
+impl From<Object<'_>> for (StoredValue, Tag) {
     fn from(object: Object<'_>) -> Self {
         match object {
             Object::Nil => unreachable!("Do not serialize nil"),
@@ -204,13 +204,11 @@ impl<'a> Object<'a> {
         };
 
         match p.tag() {
-            StoredPtr::TAG_NIL => Object::Nil,
-            StoredPtr::TAG_INTEGER => Object::Integer(unsafe { v.integer }),
-            StoredPtr::TAG_FLOAT => Object::Float(unsafe { v.float }),
-            StoredPtr::TAG_SYMBOL => {
-                Object::Symbol(Symbol(DefaultSymbol::try_from_usize(p.idx()).unwrap()))
-            }
-            StoredPtr::TAG_PAIR => Object::Pair(bind(unsafe { v.pair })),
+            Tag::Nil => Object::Nil,
+            Tag::Integer => Object::Integer(unsafe { v.integer }),
+            Tag::Float => Object::Float(unsafe { v.float }),
+            Tag::Symbol => Object::Symbol(Symbol(DefaultSymbol::try_from_usize(p.idx()).unwrap())),
+            Tag::Pair => Object::Pair(bind(unsafe { v.pair })),
             _ => panic!("invalid tag, possible data corruption"),
         }
     }
