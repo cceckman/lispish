@@ -386,6 +386,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "lispish-store"
+version = "0.1.0"
+dependencies = [
+ "dot-writer",
+ "maud",
+ "string-interner",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
 name = "log"
 version = "0.4.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
