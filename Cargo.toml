@@ -2,5 +2,5 @@
 
 resolver = "2"
 
-members = ["lispish"]
+members = ["lispish", "lispish-store"]
 
