@@ -38,6 +38,9 @@ use self::render::ObjectFormats;
 #[cfg(feature = "render")]
 mod render;
 
+mod tag;
+pub use tag::*;
+
 type Error = String;
 
 /// Storage allows representing all persistent objects.
@@ -123,7 +126,7 @@ impl Generation {
     }
 
     /// Stores the Lisp object in storage.
-    fn put(&mut self, stored: StoredValue, tag: u8) -> StoredPtr {
+    fn put(&mut self, stored: StoredValue, tag: Tag) -> StoredPtr {
         let slot = self.objects.len();
         self.objects.push(stored);
         StoredPtr::new(slot, tag)
@@ -187,7 +190,7 @@ impl Storage {
             .symbols
             .borrow_mut()
             .get_or_intern(symbol.to_uppercase());
-        self.bind(StoredPtr::new(s.to_usize(), StoredPtr::TAG_SYMBOL))
+        self.bind(StoredPtr::new(s.to_usize(), Tag::Symbol))
     }
 
     /// Retrieve a symbol to the symbol table.
@@ -456,34 +459,20 @@ struct StoredPtr {
 
 impl Default for StoredPtr {
     fn default() -> Self {
-        Self::new(0, Self::TAG_NIL)
+        Self::new(0, Tag::Nil)
     }
 }
 
 impl StoredPtr {
-    // Non-recursing types:
-    const TAG_NIL: u8 = 0;
-    const TAG_INTEGER: u8 = 1;
-    const TAG_FLOAT: u8 = 2;
-
-    // Recursively-defined types:
-    const TAG_STRING: u8 = 3;
-    const TAG_SYMBOL: u8 = 4;
-    const TAG_PAIR: u8 = 5;
-    const TAG_VECTOR: u8 = 6;
-    const TAG_BYTEVECTOR: u8 = 7;
-    // TODO: Can we use tag 6 for "compiled function"?
-    // Or do we even need that, once we get strings into the lisp store?
-
-    fn new(idx: usize, tag: u8) -> Self {
+    fn new(idx: usize, tag: Tag) -> Self {
         StoredPtr {
             combined_tag: ((idx as u32) << 3) | (tag as u32),
         }
     }
 
     #[inline]
-    fn tag(&self) -> u8 {
-        (self.combined_tag & 0b111) as u8
+    fn tag(&self) -> Tag {
+        ((self.combined_tag & 0b111) as u8).into()
     }
 
     #[inline]
@@ -493,24 +482,24 @@ impl StoredPtr {
 
     #[inline]
     fn is_nil(&self) -> bool {
-        self.tag() == Self::TAG_NIL
+        self.tag() == Tag::Nil
     }
 
     #[inline]
     fn is_integer(&self) -> bool {
-        self.tag() == StoredPtr::TAG_INTEGER
+        self.tag() == Tag::Integer
     }
     #[inline]
     fn is_symbol(&self) -> bool {
-        self.tag() == StoredPtr::TAG_SYMBOL
+        self.tag() == Tag::Symbol
     }
     #[inline]
     fn is_float(&self) -> bool {
-        self.tag() == StoredPtr::TAG_FLOAT
+        self.tag() == Tag::Float
     }
     #[inline]
     fn is_pair(&self) -> bool {
-        self.tag() == StoredPtr::TAG_PAIR
+        self.tag() == Tag::Pair
     }
 }
 
