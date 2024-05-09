@@ -2,6 +2,8 @@ use std::marker::PhantomData;
 
 use string_interner::{DefaultSymbol, Symbol as InternerSymbol};
 
+use crate::StoredVector;
+
 use super::{Bind, Storage, StoredPair, StoredPtr, StoredValue, Tag};
 
 /// Enum for a Lisp object.
@@ -13,6 +15,7 @@ pub enum Object<'a> {
     Float(Float) = Tag::Float as u8,
     Symbol(Symbol) = Tag::Symbol as u8,
     Pair(Pair<'a>) = Tag::Pair as u8,
+    Bytes(Bytes) = Tag::Bytes as u8,
 }
 
 /// An ID for a stored object: a combination of pointer and type-tag.
@@ -116,7 +119,7 @@ impl Default for Ptr<'_> {
     }
 }
 
-impl Object<'_> {
+impl<'a> Object<'a> {
     /// Create a nil object.
     /// Nil objects are never stored, so this can be constructed directly (for convienient consing)
     pub fn nil() -> Ptr<'static> {
@@ -131,6 +134,28 @@ impl Object<'_> {
         // field, so we can read the discriminant without offsetting the pointer.
         unsafe { *<*const _>::from(self).cast::<u8>() }.into()
     }
+
+    pub fn as_integer(&self) -> Option<Integer> {
+        match self {
+            Object::Integer(p) => Some(*p),
+            _ => None,
+        }
+    }
+
+    pub fn as_pair(&self) -> Option<Pair<'a>> {
+        match self {
+            Object::Pair(p) => Some(*p),
+            _ => None,
+        }
+    }
+
+    pub fn as_bytes(&self) -> Option<Bytes> {
+        match self {
+            Object::Bytes(p) => Some(*p),
+            _ => None,
+        }
+    }
+
 }
 
 impl From<i64> for Object<'_> {
@@ -142,6 +167,12 @@ impl From<i64> for Object<'_> {
 impl From<f64> for Object<'_> {
     fn from(value: f64) -> Self {
         Object::Float(value)
+    }
+}
+
+impl From<Bytes> for Object<'_> {
+    fn from(value: Bytes) -> Self {
+        Object::Bytes(value)
     }
 }
 
@@ -175,6 +206,7 @@ impl From<Object<'_>> for (StoredValue, Tag) {
             Object::Symbol(_) => unreachable!("Symbols are interned, not stored"),
             Object::Integer(i) => (StoredValue { integer: i }, object.tag()),
             Object::Float(f) => (StoredValue { float: f }, object.tag()),
+            Object::Bytes(b) => (StoredValue { bytes: b }, object.tag()),
             Object::Pair(p) => (
                 StoredValue {
                     pair: StoredPair {
@@ -188,34 +220,33 @@ impl From<Object<'_>> for (StoredValue, Tag) {
     }
 }
 
-impl<'a> Object<'a> {
-    pub(super) fn new(p: Ptr<'a>, v: StoredValue) -> Self {
-        let bind = |raw: StoredPair| -> Pair<'a> {
-            Pair {
-                car: Ptr {
-                    raw: raw.car,
-                    store: p.store,
-                },
-                cdr: Ptr {
-                    raw: raw.cdr,
-                    store: p.store,
-                },
-            }
-        };
+impl<'a> Bind<'a> for Object<'a> {
+    type Free = (StoredPtr, StoredValue);
+
+    fn bind(store: &'a Storage, free: Self::Free) -> Self {
+        let (p, v) = free;
 
         match p.tag() {
             Tag::Nil => Object::Nil,
             Tag::Integer => Object::Integer(unsafe { v.integer }),
             Tag::Float => Object::Float(unsafe { v.float }),
+            Tag::Bytes => Object::Bytes(unsafe { v.bytes }),
             Tag::Symbol => Object::Symbol(Symbol(DefaultSymbol::try_from_usize(p.idx()).unwrap())),
-            Tag::Pair => Object::Pair(bind(unsafe { v.pair })),
-            _ => panic!("invalid tag, possible data corruption"),
+            Tag::Pair => Object::Pair({
+                let p = unsafe { v.pair };
+                Pair {
+                    car: Ptr::bind(store, p.car),
+                    cdr: Ptr::bind(store, p.cdr),
+                }
+            }),
+            _ => todo!(),
         }
     }
 }
 
 pub type Integer = i64;
 pub type Float = f64;
+pub type Bytes = [u8; 8];
 
 impl std::fmt::Debug for Ptr<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

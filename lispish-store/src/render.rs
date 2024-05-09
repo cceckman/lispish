@@ -74,6 +74,10 @@ fn render_node<'a>(
                     td port="car" { (car) }
                     td port="cdr" { (cdr) }
         ),
+        Object::Bytes(b) => maud::html!(
+                    td { (format!("{:x?}", &b[..4])) }
+                    td { (format!("{:x?}", &b[4..])) }
+        ),
     };
     node.set_html(&format!(
         "<{}>",
