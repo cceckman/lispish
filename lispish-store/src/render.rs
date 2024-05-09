@@ -78,6 +78,7 @@ fn render_node<'a>(
                     td { (format!("{:x?}", &b[..4])) }
                     td { (format!("{:x?}", &b[4..])) }
         ),
+        Object::Vector(v) => todo!(),
     };
     node.set_html(&format!(
         "<{}>",
