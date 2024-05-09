@@ -36,8 +36,8 @@ impl std::fmt::Display for StoredPtr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let tag = match self.tag() {
             Tag::Nil => "nil",
-            Tag::Integer => "i64",
-            Tag::Float => "f64",
+            Tag::Integer => "int",
+            Tag::Float => "flt",
             Tag::Symbol => "sym",
             Tag::Pair => "obj",
             Tag::Bytes => "byt",
@@ -54,8 +54,8 @@ impl std::str::FromStr for StoredPtr {
         if let Some((tag, number)) = s.split_once('#') {
             let tag = match tag {
                 "nil" => Tag::Nil,
-                "i64" => Tag::Integer,
-                "f64" => Tag::Float,
+                "int" => Tag::Integer,
+                "flt" => Tag::Float,
                 "sym" => Tag::Symbol,
                 "obj" => Tag::Pair,
                 "vec" => Tag::Vector,

@@ -252,7 +252,7 @@ impl Storage {
 
     /// Retrieve a symbol to the symbol table.
     pub fn get_symbol_ptr(&self, ptr: Ptr) -> Ref<'_, str> {
-        let symbol = DefaultSymbol::try_from_usize(ptr.raw.idx() as usize).unwrap();
+        let symbol = DefaultSymbol::try_from_usize(ptr.raw.idx()).unwrap();
         let symtab = self.symbols.borrow();
         Ref::map(symtab, |v| {
             v.resolve(symbol).expect("retrieved nonexistent symbol")
@@ -341,12 +341,18 @@ impl Storage {
     /// `Ptr` cannot "just" implement `FromStr` because it cannot correctly infer
     /// the lifetime. This function validates the pointer's range and binds it to
     /// this arena's lifetime.
+    ///
+    /// Note, though, this does not and cannot check the type of the pointer;
+    /// we're trusting that the tag in the string matches the actual object.
     pub fn lookup(&self, object_id: &str) -> Result<Ptr<'_>, String> {
         let stored: StoredPtr = object_id.parse()?;
         let max_obj = self.generation.borrow().objects.len();
         let max_sym = self.symbols.borrow().len();
 
-        if stored.is_symbol() && stored.idx() < max_sym || stored.idx() < max_obj {
+        let symbol_ok = stored.is_symbol() && stored.idx() < max_sym;
+        let object_ok = !stored.is_symbol() && stored.idx() < max_obj;
+
+        if symbol_ok || object_ok {
             Ok(self.bind(stored))
         } else {
             Err(format!("object {} is invalid - out of range", stored))
@@ -956,10 +962,7 @@ mod tests {
         let two = store.put(2);
         let v = store.put(Pair::cons(one, two));
         // Symbols are canonicalized to uppercase:
-        assert_eq!(
-            store.display(store.get(v)),
-            format!("(i64#{}, i64#{})", one.idx(), two.idx())
-        );
+        assert_eq!(store.display(store.get(v)), format!("({}, {})", one, two));
     }
 
     #[test]
@@ -991,5 +994,43 @@ mod tests {
         let vo = store.get(Ptr::nil());
         // Symbols are canonicalized to uppercase:
         assert_eq!(store.display(vo), "nil");
+    }
+
+    #[test]
+    fn lookup_nil_ok() {
+        let store = Storage::default();
+        let ptr = store.lookup("nil#0").unwrap();
+        assert_eq!(ptr, Ptr::nil());
+    }
+
+    #[test]
+    fn lookup_object_ok() {
+        let store = Storage::default();
+        let v = store.put(1);
+        let ptr = store.lookup(&v.to_string()).unwrap();
+        assert_eq!(ptr, v);
+    }
+
+    #[test]
+    fn lookup_symbol_ok() {
+        let store = Storage::default();
+        let v = store.put_symbol("hello");
+        let ptr = store.lookup(&v.to_string()).unwrap();
+        assert_eq!(ptr, v);
+    }
+
+    #[test]
+    fn lookup_invalid_object() {
+        let store = Storage::default();
+        const INTS: &[char] = &['0', '1', '2', '3', '4', '5', '6', '7', '8'];
+        let v = format!("{}", store.put(1)).replace(INTS, "9");
+        store.lookup(&v.to_string()).unwrap_err();
+    }
+
+    #[test]
+    fn lookup_invalid_symbol() {
+        let v = Storage::default().put_symbol("hello").to_string();
+        let new_store = Storage::default();
+        new_store.lookup(&v).unwrap_err();
     }
 }
