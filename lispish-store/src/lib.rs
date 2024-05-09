@@ -90,7 +90,6 @@ pub struct Storage {
 /// Data that exists for a single "generation" (between GCs).
 struct Generation {
     objects: Vec<StoredValue>,
-    string_data: Vec<u8>,
 }
 
 impl Default for Generation {
@@ -98,7 +97,6 @@ impl Default for Generation {
         Self {
             // Always reserve the 0 index.
             objects: vec![StoredValue { tombstone: 0 }],
-            string_data: Default::default(),
         }
     }
 }
@@ -111,7 +109,6 @@ impl Generation {
         Self {
             // Always reserve the 0 index.
             objects,
-            string_data: Default::default(),
         }
     }
 
@@ -129,7 +126,6 @@ impl Generation {
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 pub struct StorageStats {
     pub objects: usize,
-    pub string_data: usize,
     pub symbols: usize,
 }
 
@@ -138,7 +134,6 @@ impl StorageStats {
         StorageStats {
             // Update stats before compaction:
             objects: max(self.objects, other.objects),
-            string_data: max(self.string_data, other.string_data),
             symbols: max(self.symbols, other.symbols),
         }
     }
@@ -198,7 +193,6 @@ impl Storage {
         StorageStats {
             // Discount one object, the reserved nil index.
             objects: gen.objects.len() - 1,
-            string_data: gen.string_data.len(),
             symbols: self.symbols.borrow().len(),
         }
     }
@@ -238,11 +232,6 @@ impl Storage {
     pub fn update(&self, ptr: Ptr, object: Pair) {
         assert!(ptr.is_pair());
         self.generation.borrow_mut().update(ptr.raw, object.into());
-    }
-
-    /// Add a string.
-    pub fn put_string(&self, content: &[u8]) -> Ptr {
-        todo!()
     }
 
     /// Stores the Lisp object in storage.
@@ -329,8 +318,6 @@ fn gc_internal(
     roots: &mut [&mut StoredPtr],
     labels: &mut ObjectFormats,
 ) -> Generation {
-    // TODO: Add trace output for debug
-
     let mut live_objects = BitSet::new();
     let mut queue: VecDeque<StoredPtr> = roots
         .iter()
@@ -340,7 +327,6 @@ fn gc_internal(
     // We'll never shrink below our number of live objects at _last_ GC.
     // We could apply some hysteresis here, but... eh, TODO.
     let mut next_gen = Generation::with_capacity(last_gen.objects.len());
-    let mut string_length = 0usize;
 
     // First pass:
     // -    Move all objects to the new arena.
@@ -407,7 +393,6 @@ fn gc_internal(
     }
 
     // Now we have a list of "old" pointers in the heap to go through.
-    next_gen.string_data.reserve_exact(string_length);
     while let Some(old_ptr) = queue.pop_front() {
         // Internal check: we shouldn't traverse to nil pointers.
         assert!(!old_ptr.is_nil());
@@ -475,6 +460,34 @@ struct StoredVector {
     start: StoredPtr,
 }
 
+impl StoredVector {
+    /// Get an offsetted pointer into this vector.
+    pub fn offset(&self, i: u32) -> Option<StoredPtr> {
+        if i < self.length {
+            Some(StoredPtr::new(
+                self.start.idx() + i as usize,
+                self.start.tag(),
+            ))
+        } else {
+            None
+        }
+    }
+}
+
+impl Iterator for StoredVector {
+    type Item = StoredPtr;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.length > 0 {
+            let result = Some(self.start);
+            self.length -= 1;
+            self.start = StoredPtr::new(self.start.idx() + 1, self.start.tag());
+            result
+        } else {
+            None
+        }
+    }
+}
+
 /// A "raw" pointer, without lifetime data.
 /// This is the internal type for Storage; outside of storage,
 /// the Ptr type provides a lifetime bound.
@@ -526,6 +539,10 @@ impl StoredPtr {
     #[inline]
     fn is_pair(&self) -> bool {
         self.tag() == Tag::Pair
+    }
+    #[inline]
+    fn is_vector(&self) -> bool {
+        self.tag() == Tag::Vector
     }
 }
 

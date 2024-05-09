@@ -168,7 +168,6 @@ impl StorageStats {
         maud::html!(
             strong { (header) ": " }
             (self.objects) " objects / "
-            (self.string_data) " string bytes / "
             (self.symbols) " symbols"
         )
     }
