@@ -16,6 +16,7 @@ pub enum Object<'a> {
     Symbol(Symbol) = Tag::Symbol as u8,
     Pair(Pair<'a>) = Tag::Pair as u8,
     Bytes(Bytes) = Tag::Bytes as u8,
+    Vector(Vector<'a>) = Tag::Vector as u8,
 }
 
 /// An ID for a stored object: a combination of pointer and type-tag.
@@ -42,7 +43,6 @@ impl std::fmt::Display for StoredPtr {
             Tag::Bytes => "byt",
             Tag::Vector => "vec",
             Tag::String => "str",
-            _ => "???",
         };
         write!(f, "{}#{}", tag, self.idx())
     }
@@ -156,6 +156,12 @@ impl<'a> Object<'a> {
         }
     }
 
+    pub fn as_vector(&self) -> Option<Vector<'a>> {
+        match self {
+            Object::Vector(p) => Some(*p),
+            _ => None,
+        }
+    }
 }
 
 impl From<i64> for Object<'_> {
@@ -216,6 +222,15 @@ impl From<Object<'_>> for (StoredValue, Tag) {
                 },
                 object.tag(),
             ),
+            Object::Vector(v) => (
+                StoredValue {
+                    vector: StoredVector {
+                        length: v.length,
+                        start: v.start.raw,
+                    },
+                },
+                object.tag(),
+            ),
         }
     }
 }
@@ -237,6 +252,13 @@ impl<'a> Bind<'a> for Object<'a> {
                 Pair {
                     car: Ptr::bind(store, p.car),
                     cdr: Ptr::bind(store, p.cdr),
+                }
+            }),
+            Tag::Vector => Object::Vector({
+                let v = unsafe { v.vector };
+                Vector {
+                    length: v.length,
+                    start: Ptr::bind(store, v.start),
                 }
             }),
             _ => todo!(),
@@ -266,6 +288,36 @@ pub struct Pair<'a> {
 impl<'a> Pair<'a> {
     pub fn cons(car: Ptr<'a>, cdr: Ptr<'a>) -> Self {
         Self { car, cdr }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Vector<'a> {
+    pub length: u32,
+    pub start: Ptr<'a>,
+}
+
+impl<'a> Vector<'a> {
+    pub fn offset(&self, idx: usize) -> Option<Ptr<'a>> {
+        if (idx as u32) < self.length {
+            Some(Ptr {
+                raw: StoredPtr::new(self.start.idx() + idx, self.start.tag()),
+                store: self.start.store,
+            })
+        } else {
+            None
+        }
+    }
+}
+
+impl<'a> Bind<'a> for Vector<'a> {
+    type Free = StoredVector;
+
+    fn bind(store: &'a Storage, raw: Self::Free) -> Self {
+        Self {
+            length: raw.length,
+            start: store.bind(raw.start),
+        }
     }
 }
 

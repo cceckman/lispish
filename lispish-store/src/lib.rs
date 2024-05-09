@@ -16,16 +16,12 @@
 //! -   Float: a 64-bit floating-point number (IEEE 754).
 //! -   Pair: a pair of pointers to objects.
 //! -   Bytes: 8 bytes.
-//! -   Vector: A reference to a set of:
-//!     - Contiguously-allocated _objects_, all of the same non-Nil type.
-//!     - Contiguously-allocated _pointers_, each of which may be a different type.
+//! -   Vector: A reference to a set of contiguously-allocated _objects_,
+//!     all of the same type, which are neither nil nor symbol.
 //! -   Symbol: an entry in the designated, interned symbol table.
 //! -   String: A vector of bytes representing a valid UTF-8 string.
-//!
-//! TODO:
-//! A vector-of-pointers _is also_ a linked-list, where the first element has as `car`
-//! the literal length of the list (not a pointer), and all subsequent elements
-//! are in the linked-list.
+//!     TODO: Necessary to have as a distinct top-level type, representing UTF-8?
+//!     Or can we have it as a structure: (bytelength (vector))
 //!
 //! ## Old notes
 //!
@@ -164,6 +160,24 @@ impl Generation {
         assert!(idx < self.objects.len());
         self.objects[idx].pair = pair;
     }
+
+    /// Put a vector of objects.
+    /// In this case, all the tags are the same, because it's a single T.
+    fn put_vector<T>(&mut self, objects: impl Iterator<Item = T>) -> StoredPtr
+    where
+        T: UniformVector,
+    {
+        // TODO: Need to get tag even from an empty T...eh?
+        let idx = self.objects.len();
+        self.objects.extend(objects.map(|v: T| v.store()));
+        let length = self.objects.len() - idx;
+        let ptr = StoredPtr::new(idx, T::tag());
+        let vec = StoredVector {
+            length: length as u32,
+            start: ptr,
+        };
+        self.put(StoredValue { vector: vec }, Tag::Vector)
+    }
 }
 
 /// Bind is a trait for binding stored types to the storage that holds them:
@@ -207,6 +221,25 @@ impl Storage {
             .borrow_mut()
             .get_or_intern(symbol.to_uppercase());
         self.bind(StoredPtr::new(s.to_usize(), Tag::Symbol))
+    }
+
+    /// Insert a uniform vector into the storage.
+    #[allow(private_bounds)]
+    pub fn put_vector<T>(&self, v: impl Iterator<Item = T>) -> Ptr
+    where
+        T: UniformVector,
+    {
+        let mut gen = self.generation.borrow_mut();
+        let p = gen.put_vector(v);
+        self.bind(p)
+    }
+
+    /// Get a pointer-to-an-element from a vector.
+    /// Returns none if v is not a vector or if the index is out-of-range.
+    pub fn get_element_ptr(&self, v: Ptr, idx: u32) -> Option<Ptr> {
+        let stored_vector = self.generation.borrow().get(v.raw).as_vector(v.raw)?;
+        let ptr = stored_vector.offset(idx)?;
+        Some(self.bind(ptr))
     }
 
     /// Retrieve a symbol to the symbol table.
@@ -291,6 +324,7 @@ impl Storage {
             Object::Symbol(j) => format!("{}", self.get_symbol(j)),
             Object::Pair(Pair { car, cdr }) => format!("({car}, {cdr})"),
             Object::Bytes(b) => format!("[{b:?}]"),
+            Object::Vector(b) => todo!(),
         }
     }
 
@@ -330,18 +364,16 @@ fn gc_internal(
     // TODO: Consider a stack rather than a queue. Measure: do we run faster with one or the other?
     // (Hypothesis: stack will result in better data locality.)
     while let Some(old_ptr) = queue.pop_front() {
-        // Internal check: we shouldn't traverse to nil pointers or to symbols,
-        // they're the same in the new generation.
-        assert!(!old_ptr.is_nil() && !old_ptr.is_symbol());
-
         let old_idx = old_ptr.idx();
-        if live_objects.get(old_idx) {
+        if old_ptr.is_nil() || old_ptr.is_symbol() || live_objects.get(old_idx) {
+            // Iether a non-moving value, or already have visited.
+            // Skip.
             continue;
         }
         live_objects.set(old_idx);
 
         let got = last_gen.get(old_ptr);
-        if let Some(p) = got.recursable(old_ptr) {
+        if let Some(p) = got.as_pair(old_ptr) {
             for rp in [p.car, p.cdr] {
                 // Skip over nil (always 0) and symbols (different indices,
                 // perpetual).
@@ -350,7 +382,11 @@ fn gc_internal(
                 }
             }
         }
-        // TODO: Handle vectors.
+        if let Some(v) = got.as_vector(old_ptr) {
+            // Visit each of the children
+            // (that is neither nil nor a symbol- skip them up-front rather than enqueueing).
+            queue.extend(v.filter(|p| !(p.is_symbol() || p.is_nil())))
+        }
     }
 
     // We've marked all the objects.
@@ -405,7 +441,7 @@ fn gc_internal(
         live_objects.clear(old_ptr.idx());
 
         let new_ptr = last_gen.get_next(old_ptr);
-        if let Some(mut pair) = next_gen.get(new_ptr).recursable(new_ptr) {
+        if let Some(mut pair) = next_gen.get(new_ptr).as_pair(new_ptr) {
             // This is a pair/function we need to update its inner pointers, in the new arena.
             // This object still contains the old pointers, because we haven't visited this node on this pass.
             // Put the old pointers in the queue, and update the new location.
@@ -418,7 +454,17 @@ fn gc_internal(
             }
             next_gen.objects[new_ptr.idx()].pair = pair;
         }
-        // TODO: Handle vectors
+        if let Some(old_vector) = next_gen.get(new_ptr).as_vector(new_ptr) {
+            // First, remap the start:
+            let new_start = last_gen.get_next(old_vector.start);
+            next_gen.objects[new_ptr.idx()].vector = StoredVector {
+                length: old_vector.length,
+                start: new_start,
+            };
+
+            // And - we need to visit all the _old_ locations.
+            queue.extend(old_vector.filter(|p| !(p.is_symbol() || p.is_nil())))
+        }
     }
 
     next_gen
@@ -445,9 +491,18 @@ union StoredValue {
 }
 
 impl StoredValue {
-    fn recursable(&self, ptr: StoredPtr) -> Option<StoredPair> {
+    fn as_pair(&self, ptr: StoredPtr) -> Option<StoredPair> {
         if ptr.is_pair() {
             Some(unsafe { self.pair })
+        } else {
+            None
+        }
+    }
+
+    fn as_vector(&self, ptr: StoredPtr) -> Option<StoredVector> {
+        if ptr.is_vector() {
+            let v = unsafe { self.vector };
+            Some(v)
         } else {
             None
         }
@@ -502,6 +557,69 @@ impl Default for StoredPtr {
     }
 }
 
+/// The types that can be stored in a (uniform) vector.
+///
+/// These are only:
+/// - Integers
+/// - Floats
+/// - Bytes
+/// - Pairs
+/// - TODO: Vectors
+/// - TODO: Strings
+///
+/// Other types, such as "symbol",
+/// or non-uniform types, i.e. a vector of mixed types,
+/// can be encoded as a vector of pairs
+/// (optionally / by default, with chaining, so list algorithms still operate on them).
+trait UniformVector {
+    /// Get the tag to use for this type.
+    fn tag() -> Tag;
+
+    /// Convert to the stored representation.
+    fn store(self) -> StoredValue;
+}
+
+impl UniformVector for Integer {
+    fn tag() -> Tag {
+        Tag::Integer
+    }
+    fn store(self) -> StoredValue {
+        StoredValue { integer: self }
+    }
+}
+
+impl UniformVector for Float {
+    fn tag() -> Tag {
+        Tag::Float
+    }
+    fn store(self) -> StoredValue {
+        StoredValue { float: self }
+    }
+}
+
+impl UniformVector for Pair<'_> {
+    fn tag() -> Tag {
+        Tag::Pair
+    }
+    fn store(self) -> StoredValue {
+        StoredValue {
+            pair: StoredPair {
+                car: self.car.raw,
+                cdr: self.cdr.raw,
+            },
+        }
+    }
+}
+
+impl UniformVector for Bytes {
+    fn tag() -> Tag {
+        Tag::Bytes
+    }
+    fn store(self) -> StoredValue {
+        StoredValue { bytes: self }
+    }
+}
+
 impl StoredPtr {
     fn new(idx: usize, tag: Tag) -> Self {
         StoredPtr {
@@ -516,7 +634,7 @@ impl StoredPtr {
 
     #[inline]
     fn idx(&self) -> usize {
-        (self.combined_tag & !0b111) as usize >> 3
+        (self.combined_tag as usize & !0b111) >> 3
     }
 
     #[inline]
@@ -573,6 +691,7 @@ impl From<Pair<'_>> for StoredPair {
 #[cfg(test)]
 mod tests {
     use core::panic;
+    use std::iter::once;
 
     use crate::Bytes;
 
@@ -759,5 +878,82 @@ mod tests {
         let pair = store.get(store.root()).as_pair().unwrap();
         let bytes = store.get(pair.car).as_bytes().unwrap();
         assert_eq!(bytes, b);
+    }
+
+    #[test]
+    fn byte_vector() {
+        let mut store = Storage::default();
+
+        let b1: Bytes = [1, 0, 0, 0, 2, 0, 0, 0];
+        let b2: Bytes = [3, 0, 0, 0, 4, 0, 0, 0];
+        let vptr = store.put_vector([b1, b2].into_iter());
+
+        let pair = store.put(Pair::cons(vptr, Ptr::nil()));
+        store.set_root(pair);
+
+        // Lookup before GC:
+        {
+            let bx = store.get_element_ptr(vptr, 1).unwrap();
+            let b22 = store.get(bx).as_bytes().unwrap();
+            assert_eq!(b2, b22);
+        }
+
+        store.gc();
+
+        // Lookup after GC; should be preserved:
+        {
+            let Pair { car: vptr, .. } = store.get(store.root()).as_pair().unwrap();
+            let v = store.get(vptr).as_vector().unwrap();
+            assert_eq!(v.length, 2);
+            let bx = store.get_element_ptr(vptr, 1).unwrap();
+            let b22 = store.get(bx).as_bytes().unwrap();
+            assert_eq!(b2, b22);
+        }
+    }
+
+    #[test]
+    fn pair_vector() {
+        let mut store = Storage::default();
+
+        let one = store.put(1);
+        let two = store.put(2);
+        let vptr = store
+            .put_vector([Pair::cons(one, Ptr::nil()), Pair::cons(Ptr::nil(), two)].into_iter());
+
+        store.set_root(vptr);
+
+        // Lookup before GC:
+        {
+            let bx = store.get_element_ptr(vptr, 1).unwrap();
+            let p = store.get(bx).as_pair().unwrap();
+            assert_eq!(p.car, Ptr::nil());
+            assert_eq!(p.cdr, two);
+        }
+
+        store.gc();
+
+        // Lookup after GC, one and two should be preserved:
+        {
+            let v = store.get(store.root()).as_vector().unwrap();
+            assert_eq!(v.length, 2);
+            let onecell = store.get(v.offset(0).unwrap()).as_pair().unwrap();
+            let twocell = store.get(v.offset(1).unwrap()).as_pair().unwrap();
+
+            assert_eq!(onecell.cdr, Ptr::nil());
+            assert_eq!(twocell.car, Ptr::nil());
+            let got_one = store.get(onecell.car).as_integer().unwrap();
+            assert_eq!(got_one, 1);
+            let got_two = store.get(twocell.cdr).as_integer().unwrap();
+            assert_eq!(got_two, 2);
+
+            // And we'll check: we can hold on to an individual element, even after the vector is
+            // discarded.
+            store.set_root(v.offset(1).unwrap());
+        }
+        store.gc();
+
+        let twocell = store.get(store.root()).as_pair().unwrap();
+        let got_two = store.get(twocell.cdr).as_integer().unwrap();
+        assert_eq!(got_two, 2);
     }
 }
