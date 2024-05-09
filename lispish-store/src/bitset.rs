@@ -4,6 +4,7 @@
 /// then see if Roaring or something helps.
 #[derive(Clone, Debug, Default)]
 pub struct BitSet {
+    count: usize,
     data: Vec<usize>,
 }
 
@@ -23,7 +24,7 @@ impl BitSet {
             return false;
         }
         let bit = self.data[word] & (1 << bit);
-        return bit != 0;
+        bit != 0
     }
 
     /// Sets the given bit.
@@ -33,6 +34,12 @@ impl BitSet {
         if word >= self.data.len() {
             self.data.resize(word + 1, 0);
         }
+        {
+            let masked = self.data[word] & (1 << bit);
+            if masked == 0 {
+                self.count += 1;
+            }
+        }
         self.data[word] |= 1 << bit;
     }
 
@@ -41,9 +48,50 @@ impl BitSet {
         let word = idx / Self::BITS_PER_WORD;
         let bit = idx % Self::BITS_PER_WORD;
         if word >= self.data.len() {
-            self.data.resize(word + 1, 0);
+            // Nothing to do, it's already cleared.
+            return;
         }
+        {
+            let masked = self.data[word] & (1 << bit);
+            if masked != 0 {
+                self.count -= 1;
+            }
+        }
+
         self.data[word] &= !(1 << bit);
+    }
+
+    pub fn count(&self) -> usize {
+        self.count
+    }
+
+    /// Iterator over the bits that are set.
+    pub fn bits_set(&self) -> impl '_ + Iterator<Item = usize> {
+        BitIterator {
+            idx: 0,
+            bitset: self,
+        }
+    }
+}
+
+struct BitIterator<'a> {
+    idx: usize,
+    bitset: &'a BitSet,
+}
+
+impl Iterator for BitIterator<'_> {
+    type Item = usize;
+
+    fn next(&mut self) -> Option<usize> {
+        while !self.bitset.get(self.idx) {
+            if self.idx >= self.bitset.data.len() {
+                return None;
+            }
+            self.idx += 1;
+        }
+        let result = self.idx;
+        self.idx += 1;
+        Some(result)
     }
 }
 
@@ -73,5 +121,23 @@ mod tests {
         }
         bs.set(1);
         bs.clear(2);
+    }
+
+    #[test]
+    fn iterator() {
+        let indices = {
+            let mut v = vec![1, 2, 5, 14354, 764756, 25436];
+            v.sort();
+            v
+        };
+
+        let mut bs = BitSet::new();
+        for i in indices.iter() {
+            bs.set(*i);
+        }
+
+        for (a, &b) in bs.bits_set().zip(indices.iter()) {
+            assert_eq!(a, b);
+        }
     }
 }
