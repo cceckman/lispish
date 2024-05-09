@@ -21,7 +21,7 @@
 //! -   Symbol: an entry in the designated, interned symbol table.
 //! -   String: A vector of bytes representing a valid UTF-8 string.
 //!     TODO: Necessary to have as a distinct top-level type, representing UTF-8?
-//!     Or can we have it as a structure: (bytelength (vector))
+//!     Or can we treat it as a structure: (bytelength (vector))
 //!
 //! ## Old notes
 //!
@@ -734,108 +734,66 @@ mod tests {
         }
     }
 
-    // #[test]
-    // fn gc_strings() {
-    //     let mut store = Storage::default();
-    //
-    //     const A: &[u8] = b"this is string A";
-    //     const B: &[u8] = b"this is what I call string B";
-    //     const C: &[u8] = b"this is what I call podracing!";
-    //
-    //     let ptrs: [Ptr; 3] = [A, B, C].map(|b| store.put_string(b));
-    //     assert_eq!(store.current_stats().objects, 3);
-    //     assert_eq!(
-    //         store.current_stats().string_data,
-    //         A.len() + B.len() + C.len()
-    //     );
-    //
-    //     if let Object::String(s) = store.get(ptrs[1]) {
-    //         assert_eq!(store.get_string(&s).as_ref(), B);
-    //     } else {
-    //         panic!("unexpected object: {:?}", store.get(ptrs[1]));
-    //     }
-    //
-    //     store.set_root(store.put(Pair::cons(ptrs[1], ptrs[2])));
-    //     store.gc();
-    //
-    //     assert_eq!(store.current_stats().objects, 3);
-    //     assert_eq!(store.current_stats().string_data, B.len() + C.len());
-    //
-    //     let Pair { cdr: got_c, .. } = store
-    //         .get(store.root())
-    //         .try_into()
-    //         .expect("root should be a pair");
-    //     if let Object::String(s) = store.get(got_c) {
-    //         assert_eq!(store.get_string(&s).as_ref(), C);
-    //     } else {
-    //         panic!("unexpected object: {:?}", store.get(got_c));
-    //     }
-    // }
-    //
-    // #[test]
-    // fn gc_pairs() {
-    //     let mut store = Storage::default();
-    //
-    //     // Here's the real challenge for the GC!
-    //     const A: &[u8] = b"Now this is podracing!";
-    //     const B: &[u8] = b"This is...not really podracing.";
-    //     let a = store.put_string(A);
-    //     let b = store.put_string(B);
-    //
-    //     // '(a a b) in one list; '(b b) in another, using the same final cell.
-    //     let stack = {
-    //         let ls1 = store.put(Pair::cons(b, Object::nil()));
-    //         let lsa1 = store.put(Pair::cons(a, ls1));
-    //         let lsa = store.put(Pair::cons(a, lsa1));
-    //
-    //         let lsb = store.put(Pair::cons(b, ls1));
-    //
-    //         Pair::cons(lsa, lsb)
-    //     };
-    //     assert_eq!(store.current_stats().objects, 6);
-    //     assert_eq!(store.current_stats().string_data, A.len() + B.len());
-    //
-    //     store.set_root(store.put(stack));
-    //     let pre_stats = store.current_stats();
-    //     store.gc();
-    //     assert_eq!(store.current_stats(), pre_stats);
-    //
-    //     let Pair { cdr: lsb, .. } = store
-    //         .get(store.root())
-    //         .try_into()
-    //         .expect("root should be a pair");
-    //     store.set_root(lsb);
-    //     store.gc();
-    //     let stack_top = store.root();
-    //     // ('b b ()): objects are b, (b ()), and (b (b ()))
-    //     assert_eq!(store.current_stats().string_data, B.len());
-    //     assert_eq!(store.current_stats().objects, 3);
-    //
-    //     // Look, this will fail to compile- the lifetime of stack[] has to have ended:
-    //     // let _ = store.get(stack[0]);
-    //
-    //     let top = store.get(stack_top);
-    //     // This should be the root of the B tree:
-    //     let (car, cdr) = match top {
-    //         Object::Pair(Pair { car, cdr }) => (car, cdr),
-    //         _ => panic!("unexpected object: {:?}", top),
-    //     };
-    //     let (car, cdr) = match (store.get(car), store.get(cdr)) {
-    //         (Object::String(ls), Object::Pair(Pair { car, cdr })) => {
-    //             let s = store.get_string(&ls);
-    //             assert_eq!(s.as_ref(), B);
-    //             (car, cdr)
-    //         }
-    //         _ => panic!("unexpected object: {:?}", top),
-    //     };
-    //     match (store.get(car), store.get(cdr)) {
-    //         (Object::String(ls), Object::Nil) => {
-    //             let s = store.get_string(&ls);
-    //             assert_eq!(s.as_ref(), B);
-    //         }
-    //         _ => panic!("unexpected object: {:?}", top),
-    //     };
-    // }
+    #[test]
+    fn gc_pairs() {
+        let mut store = Storage::default();
+
+        // Here's the real challenge for the GC!
+        const A: i64 = 14325343;
+        const B: f64 = 1.3324;
+        let a = store.put(A);
+        let b = store.put(B);
+
+        // '(a a b) in one list; '(b b) in another, using the same final cell.
+        let stack = {
+            let ls1 = store.put(Pair::cons(b, Object::nil()));
+            let lsa1 = store.put(Pair::cons(a, ls1));
+            let lsa = store.put(Pair::cons(a, lsa1));
+
+            let lsb = store.put(Pair::cons(b, ls1));
+
+            Pair::cons(lsa, lsb)
+        };
+        assert_eq!(store.current_stats().objects, 6);
+
+        store.set_root(store.put(stack));
+        let pre_stats = store.current_stats();
+        store.gc();
+        assert_eq!(store.current_stats(), pre_stats);
+
+        let Pair { cdr: lsb, .. } = store
+            .get(store.root())
+            .try_into()
+            .expect("root should be a pair");
+        store.set_root(lsb);
+        store.gc();
+        let stack_top = store.root();
+        // ('b b ()): objects are b, (b ()), and (b (b ()))
+        assert_eq!(store.current_stats().objects, 3);
+
+        // Look, this will fail to compile- the lifetime of stack[] has to have ended:
+        // let _ = store.get(stack[0]);
+
+        let top = store.get(stack_top);
+        // This should be the root of the B tree:
+        let (car, cdr) = match top {
+            Object::Pair(Pair { car, cdr }) => (car, cdr),
+            _ => panic!("unexpected object: {:?}", top),
+        };
+        let (car, cdr) = match (store.get(car), store.get(cdr)) {
+            (Object::Float(f), Object::Pair(Pair { car, cdr })) => {
+                assert_eq!(f, B);
+                (car, cdr)
+            }
+            _ => panic!("unexpected object: {:?}", top),
+        };
+        match (store.get(car), store.get(cdr)) {
+            (Object::Float(f), Object::Nil) => {
+                assert_eq!(f, B);
+            }
+            _ => panic!("unexpected object: {:?}", top),
+        };
+    }
 
     #[test]
     fn gc_symbols() {
