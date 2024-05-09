@@ -1,6 +1,34 @@
 //! Lisp data types and allocators.
 //!
 //!
+//! ## Revised design
+//!
+//! The Lisp store is backed by an arena allocator of up to ~4000MiB.
+//! (Yes, not 4GiB- the difference allows for certain overheads.)
+//!
+//! The store provides pointer-tagged storage:
+//! - `put` methods store objects, and return pointers tagged with the relevant type.
+//! - `get` methods retrieve objects based on the pointer.
+//!
+//! The supported objects are:
+//! -   Nil: The nil pointer.
+//! -   Integer: a 64-bit integer.
+//! -   Float: a 64-bit floating-point number (IEEE 754).
+//! -   Pair: a pair of pointers to objects.
+//! -   Bytes: 8 bytes.
+//! -   Vector: A reference to a set of:
+//!     - Contiguously-allocated _objects_, all of the same non-Nil type.
+//!     - Contiguously-allocated _pointers_, each of which may be a different type.
+//! -   Symbol: an entry in the designated, interned symbol table.
+//! -   String: A vector of bytes representing a valid UTF-8 string.
+//!
+//! TODO:
+//! A vector-of-pointers _is also_ a linked-list, where the first element has as `car`
+//! the literal length of the list (not a pointer), and all subsequent elements
+//! are in the linked-list.
+//!
+//! ## Old notes
+//!
 //! The main data types of Lisp use a fixed-size arena allocator:
 //! - i64, f64 primitives
 //! - Pair, String, Symbol tuples (two pointers / offset+length)
@@ -40,8 +68,6 @@ mod render;
 
 mod tag;
 pub use tag::*;
-
-type Error = String;
 
 /// Storage allows representing all persistent objects.
 #[derive(Default)]
@@ -132,10 +158,6 @@ impl Generation {
         StoredPtr::new(slot, tag)
     }
 
-    fn put_string(&mut self, content: &[u8]) {
-        todo!()
-    }
-
     fn get(&self, ptr: StoredPtr) -> StoredValue {
         let idx = ptr.idx();
         assert!(idx < self.objects.len());
@@ -203,7 +225,7 @@ impl Storage {
 
     /// Retrieve a symbol to the symbol table.
     pub fn get_symbol_ptr(&self, ptr: Ptr) -> Ref<'_, str> {
-        let symbol = DefaultSymbol::try_from_usize(ptr.idx()).unwrap();
+        let symbol = DefaultSymbol::try_from_usize(ptr.raw.idx() as usize).unwrap();
         let symtab = self.symbols.borrow();
         Ref::map(symtab, |v| {
             v.resolve(symbol).expect("retrieved nonexistent symbol")
@@ -240,7 +262,7 @@ impl Storage {
             Object::Symbol(Symbol(DefaultSymbol::try_from_usize(ptr.idx()).unwrap()))
         } else {
             let stored = self.generation.borrow().get(ptr.raw);
-            Object::new(ptr, stored)
+            Object::bind(self, (ptr.raw, stored))
         }
     }
 
@@ -257,6 +279,7 @@ impl Storage {
     /// Run a garbage-collection pass, based on the provided roots.
     pub fn gc(&mut self) {
         let current_stats = self.current_stats();
+        tracing::trace!("starting GC with stats: {:?}", current_stats);
         self.high_water = current_stats.max(&self.high_water);
 
         // Soft-destructure:
@@ -266,6 +289,8 @@ impl Storage {
 
         let mut roots = [root.deref_mut()];
         *self.generation.get_mut() = gc_internal(last_gen, &mut roots, &mut labels);
+
+        tracing::trace!("stats after GC: {:?}", self.current_stats());
     }
 
     /// Get a displayable representation of the item.
@@ -276,6 +301,7 @@ impl Storage {
             Object::Float(i) => format!("{}", i),
             Object::Symbol(j) => format!("{}", self.get_symbol(j)),
             Object::Pair(Pair { car, cdr }) => format!("({car}, {cdr})"),
+            Object::Bytes(b) => format!("[{b:?}]"),
         }
     }
 
@@ -531,6 +557,8 @@ impl From<Pair<'_>> for StoredPair {
 mod tests {
     use core::panic;
 
+    use crate::Bytes;
+
     use super::{Object, Pair, Ptr, Storage};
 
     #[test]
@@ -695,5 +723,24 @@ mod tests {
         store.gc();
         // Keep: a, y, x, root.
         assert_eq!(store.current_stats().objects, 4);
+    }
+
+    #[test]
+    fn bytes() {
+        let mut store = Storage::default();
+
+        let b: Bytes = [1, 2, 3, 4, 5, 6, 7, 8];
+        let ptr = store.put(b);
+        match store.get(ptr) {
+            Object::Bytes(got) if got == b => (),
+            v => panic!("unexpected retrieval: {v:?}"),
+        }
+
+        let pair = store.put(Pair::cons(ptr, Ptr::nil()));
+        store.set_root(pair);
+        store.gc();
+        let pair = store.get(store.root()).as_pair().unwrap();
+        let bytes = store.get(pair.car).as_bytes().unwrap();
+        assert_eq!(bytes, b);
     }
 }
