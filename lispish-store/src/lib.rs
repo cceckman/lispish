@@ -324,10 +324,6 @@ fn gc_internal(
         .filter_map(|v| if !v.is_nil() { Some(**v) } else { None })
         .collect();
 
-    // We'll never shrink below our number of live objects at _last_ GC.
-    // We could apply some hysteresis here, but... eh, TODO.
-    let mut next_gen = Generation::with_capacity(last_gen.objects.len());
-
     // First pass:
     // -    Move all objects to the new arena.
     // -    Total up how much space we'll need for strings.
@@ -354,13 +350,16 @@ fn gc_internal(
                 }
             }
         }
-
         // TODO: Handle vectors.
+    }
 
-        // We've gotten what data we need.
-        // Copy over, and leave a tombstone:
-        let new_ptr = next_gen.put(got, old_ptr.tag());
-        last_gen.objects[old_ptr.idx()].tombstone = new_ptr.idx();
+    // We've marked all the objects.
+    // Copy them to the new generation, and leave a tombstone.
+    let mut next_gen = Generation::with_capacity(live_objects.count());
+    for old_idx in live_objects.bits_set() {
+        let new_idx = next_gen.objects.len();
+        next_gen.objects.push(last_gen.objects[old_idx]);
+        last_gen.objects[old_idx].tombstone = new_idx;
     }
 
     // Now that we've moved everything, we can update labels, dropping any unused.
@@ -396,6 +395,7 @@ fn gc_internal(
     while let Some(old_ptr) = queue.pop_front() {
         // Internal check: we shouldn't traverse to nil pointers.
         assert!(!old_ptr.is_nil());
+        assert!(!old_ptr.is_symbol());
 
         if !live_objects.get(old_ptr.idx()) {
             // We cleared the liveness on a previous pass.

@@ -84,7 +84,7 @@ impl Iterator for BitIterator<'_> {
 
     fn next(&mut self) -> Option<usize> {
         while !self.bitset.get(self.idx) {
-            if self.idx >= self.bitset.data.len() {
+            if self.idx >= (self.bitset.data.len() * BitSet::BITS_PER_WORD) {
                 return None;
             }
             self.idx += 1;
@@ -127,6 +127,24 @@ mod tests {
     fn iterator() {
         let indices = {
             let mut v = vec![1, 2, 5, 14354, 764756, 25436];
+            v.sort();
+            v
+        };
+
+        let mut bs = BitSet::new();
+        for i in indices.iter() {
+            bs.set(*i);
+        }
+
+        for (a, &b) in bs.bits_set().zip(indices.iter()) {
+            assert_eq!(a, b);
+        }
+    }
+
+    #[test]
+    fn iterator_with_zero() {
+        let indices = {
+            let mut v = vec![0, 2, 5];
             v.sort();
             v
         };
