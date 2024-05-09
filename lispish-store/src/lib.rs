@@ -323,11 +323,24 @@ impl Storage {
             Object::Float(i) => format!("{}", i),
             Object::Symbol(j) => format!("{}", self.get_symbol(j)),
             Object::Pair(Pair { car, cdr }) => format!("({car}, {cdr})"),
-            Object::Bytes(b) => format!("[{b:?}]"),
-            Object::Vector(b) => todo!(),
+            Object::Bytes(b) => format!("0x{b:02x?}"),
+            Object::Vector(b) => {
+                let mut out = "[".to_string();
+                // As with Pair, we don't display the objects themselves, just the
+                // pointers. A vector may contain itself!
+                let ptrs: Vec<_> = b.into_iter().map(|p| format!("{p}")).collect();
+                out += &ptrs.join(", ");
+                out += "]";
+                out
+            }
         }
     }
 
+    /// Look up an object in storage by a stringified pointer.
+    ///
+    /// `Ptr` cannot "just" implement `FromStr` because it cannot correctly infer
+    /// the lifetime. This function validates the pointer's range and binds it to
+    /// this arena's lifetime.
     pub fn lookup(&self, object_id: &str) -> Result<Ptr<'_>, String> {
         let stored: StoredPtr = object_id.parse()?;
         let max_obj = self.generation.borrow().objects.len();
@@ -691,7 +704,6 @@ impl From<Pair<'_>> for StoredPair {
 #[cfg(test)]
 mod tests {
     use core::panic;
-    use std::iter::once;
 
     use crate::Bytes;
 
@@ -913,5 +925,71 @@ mod tests {
         let twocell = store.get(store.root()).as_pair().unwrap();
         let got_two = store.get(twocell.cdr).as_integer().unwrap();
         assert_eq!(got_two, 2);
+    }
+
+    #[test]
+    fn display_int() {
+        let store = Storage::default();
+        let v = store.put(10);
+        assert_eq!(store.display(store.get(v)), "10");
+    }
+
+    #[test]
+    fn display_float() {
+        let store = Storage::default();
+        let v = store.put(10.2);
+        assert_eq!(store.display(store.get(v)), "10.2");
+    }
+
+    #[test]
+    fn display_symbol() {
+        let store = Storage::default();
+        let v = store.put_symbol("hello");
+        // Symbols are canonicalized to uppercase:
+        assert_eq!(store.display(store.get(v)), "HELLO");
+    }
+
+    #[test]
+    fn display_pair() {
+        let store = Storage::default();
+        let one = store.put(1);
+        let two = store.put(2);
+        let v = store.put(Pair::cons(one, two));
+        // Symbols are canonicalized to uppercase:
+        assert_eq!(
+            store.display(store.get(v)),
+            format!("(i64#{}, i64#{})", one.idx(), two.idx())
+        );
+    }
+
+    #[test]
+    fn display_bytes() {
+        let store = Storage::default();
+        let v = store.put([1, 2, 3, 4, 0xa, 0xb, 0xc, 0xd]);
+        // Symbols are canonicalized to uppercase:
+        assert_eq!(
+            store.display(store.get(v)),
+            "0x[01, 02, 03, 04, 0a, 0b, 0c, 0d]",
+        );
+    }
+
+    #[test]
+    fn display_vector() {
+        let store = Storage::default();
+        let vp = store.put_vector([1i64, 2].into_iter());
+        let vo = store.get(vp);
+        let v = vo.as_vector().unwrap();
+        let p0 = v.offset(0).unwrap();
+        let p1 = v.offset(1).unwrap();
+        // Symbols are canonicalized to uppercase:
+        assert_eq!(store.display(vo), format!("[{}, {}]", p0, p1));
+    }
+
+    #[test]
+    fn display_nil() {
+        let store = Storage::default();
+        let vo = store.get(Ptr::nil());
+        // Symbols are canonicalized to uppercase:
+        assert_eq!(store.display(vo), "nil");
     }
 }

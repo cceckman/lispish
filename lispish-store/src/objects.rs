@@ -310,6 +310,23 @@ impl<'a> Vector<'a> {
     }
 }
 
+impl<'a> Iterator for Vector<'a> {
+    type Item = Ptr<'a>;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.length > 0 {
+            let result = Some(self.start);
+            self.length -= 1;
+            self.start = Ptr {
+                raw: StoredPtr::new(self.start.idx() + 1, self.start.tag()),
+                store: self.start.store,
+            };
+            result
+        } else {
+            None
+        }
+    }
+}
+
 impl<'a> Bind<'a> for Vector<'a> {
     type Free = StoredVector;
 
