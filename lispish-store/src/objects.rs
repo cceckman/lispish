@@ -1,5 +1,3 @@
-use std::marker::PhantomData;
-
 use string_interner::{DefaultSymbol, Symbol as InternerSymbol};
 
 use crate::StoredVector;
@@ -82,6 +80,18 @@ impl std::str::FromStr for StoredPtr {
             Ok(StoredPtr::new(idx, tag))
         } else {
             Err(format!("invalid pointer {}", s))
+        }
+    }
+}
+
+impl<'a> Ptr<'a> {
+    pub fn get(&self) -> Object<'a> {
+        if let Some(store) = self.store {
+            let p = *self;
+            store.get(p)
+        } else {
+            assert!(self.is_nil());
+            Object::Nil
         }
     }
 }

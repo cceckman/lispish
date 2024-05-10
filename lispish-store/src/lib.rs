@@ -734,16 +734,17 @@ mod tests {
         assert_eq!(store.current_stats().objects, 3);
 
         let Pair { car, cdr } = store
-            .get(store.root())
+            .root()
+            .get()
             .try_into()
             .expect("root should be a pair");
-        let got_one = store.get(car);
+        let got_one = car.get();
         if let Object::Integer(1) = got_one {
         } else {
             panic!("unexpected object: {:?}", got_one);
         }
 
-        let got_two = store.get(cdr);
+        let got_two = cdr.get();
         if let Object::Float(v) = got_two {
             if v != 2.0f64 {
                 panic!("unexpected float value: {}", v)
@@ -793,20 +794,20 @@ mod tests {
         // Look, this will fail to compile- the lifetime of stack[] has to have ended:
         // let _ = store.get(stack[0]);
 
-        let top = store.get(stack_top);
+        let top = stack_top.get();
         // This should be the root of the B tree:
         let (car, cdr) = match top {
             Object::Pair(Pair { car, cdr }) => (car, cdr),
             _ => panic!("unexpected object: {:?}", top),
         };
-        let (car, cdr) = match (store.get(car), store.get(cdr)) {
+        let (car, cdr) = match (car.get(), cdr.get()) {
             (Object::Float(f), Object::Pair(Pair { car, cdr })) => {
                 assert_eq!(f, B);
                 (car, cdr)
             }
             _ => panic!("unexpected object: {:?}", top),
         };
-        match (store.get(car), store.get(cdr)) {
+        match (car.get(), cdr.get()) {
             (Object::Float(f), Object::Nil) => {
                 assert_eq!(f, B);
             }
@@ -844,16 +845,13 @@ mod tests {
 
         let b: Bytes = [1, 2, 3, 4, 5, 6, 7, 8];
         let ptr = store.put(b);
-        match store.get(ptr) {
-            Object::Bytes(got) if got == b => (),
-            v => panic!("unexpected retrieval: {v:?}"),
-        }
+        assert_eq!(b, ptr.get().as_bytes().unwrap());
 
         let pair = store.put(Pair::cons(ptr, Ptr::nil()));
         store.set_root(pair);
         store.gc();
-        let pair = store.get(store.root()).as_pair().unwrap();
-        let bytes = store.get(pair.car).as_bytes().unwrap();
+        let pair = store.root().get().as_pair().unwrap();
+        let bytes = pair.car.get().as_bytes().unwrap();
         assert_eq!(bytes, b);
     }
 
@@ -871,7 +869,7 @@ mod tests {
         // Lookup before GC:
         {
             let bx = store.get_element_ptr(vptr, 1).unwrap();
-            let b22 = store.get(bx).as_bytes().unwrap();
+            let b22 = bx.get().as_bytes().unwrap();
             assert_eq!(b2, b22);
         }
 
@@ -879,7 +877,7 @@ mod tests {
 
         // Lookup after GC; should be preserved:
         {
-            let Pair { car: vptr, .. } = store.get(store.root()).as_pair().unwrap();
+            let Pair { car: vptr, .. } = store.root().get().as_pair().unwrap();
             let v = store.get(vptr).as_vector().unwrap();
             assert_eq!(v.length, 2);
             let bx = store.get_element_ptr(vptr, 1).unwrap();
@@ -902,7 +900,7 @@ mod tests {
         // Lookup before GC:
         {
             let bx = store.get_element_ptr(vptr, 1).unwrap();
-            let p = store.get(bx).as_pair().unwrap();
+            let p = bx.get().as_pair().unwrap();
             assert_eq!(p.car, Ptr::nil());
             assert_eq!(p.cdr, two);
         }
@@ -911,16 +909,16 @@ mod tests {
 
         // Lookup after GC, one and two should be preserved:
         {
-            let v = store.get(store.root()).as_vector().unwrap();
+            let v = (store.root().get()).as_vector().unwrap();
             assert_eq!(v.length, 2);
-            let onecell = store.get(v.offset(0).unwrap()).as_pair().unwrap();
-            let twocell = store.get(v.offset(1).unwrap()).as_pair().unwrap();
+            let onecell = (v.offset(0).unwrap().get()).as_pair().unwrap();
+            let twocell = (v.offset(1).unwrap().get()).as_pair().unwrap();
 
             assert_eq!(onecell.cdr, Ptr::nil());
             assert_eq!(twocell.car, Ptr::nil());
-            let got_one = store.get(onecell.car).as_integer().unwrap();
+            let got_one = (onecell.car.get()).as_integer().unwrap();
             assert_eq!(got_one, 1);
-            let got_two = store.get(twocell.cdr).as_integer().unwrap();
+            let got_two = (twocell.cdr.get()).as_integer().unwrap();
             assert_eq!(got_two, 2);
 
             // And we'll check: we can hold on to an individual element, even after the vector is
@@ -929,8 +927,8 @@ mod tests {
         }
         store.gc();
 
-        let twocell = store.get(store.root()).as_pair().unwrap();
-        let got_two = store.get(twocell.cdr).as_integer().unwrap();
+        let twocell = (store.root().get()).as_pair().unwrap();
+        let got_two = (twocell.cdr.get()).as_integer().unwrap();
         assert_eq!(got_two, 2);
     }
 
@@ -938,14 +936,14 @@ mod tests {
     fn display_int() {
         let store = Storage::default();
         let v = store.put(10);
-        assert_eq!(store.display(store.get(v)), "10");
+        assert_eq!(store.display(v.get()), "10");
     }
 
     #[test]
     fn display_float() {
         let store = Storage::default();
         let v = store.put(10.2);
-        assert_eq!(store.display(store.get(v)), "10.2");
+        assert_eq!(store.display(v.get()), "10.2");
     }
 
     #[test]
@@ -953,7 +951,7 @@ mod tests {
         let store = Storage::default();
         let v = store.put_symbol("hello");
         // Symbols are canonicalized to uppercase:
-        assert_eq!(store.display(store.get(v)), "HELLO");
+        assert_eq!(store.display(v.get()), "HELLO");
     }
 
     #[test]
@@ -963,7 +961,7 @@ mod tests {
         let two = store.put(2);
         let v = store.put(Pair::cons(one, two));
         // Symbols are canonicalized to uppercase:
-        assert_eq!(store.display(store.get(v)), format!("({}, {})", one, two));
+        assert_eq!(store.display(v.get()), format!("({}, {})", one, two));
     }
 
     #[test]
@@ -972,7 +970,7 @@ mod tests {
         let v = store.put([1, 2, 3, 4, 0xa, 0xb, 0xc, 0xd]);
         // Symbols are canonicalized to uppercase:
         assert_eq!(
-            store.display(store.get(v)),
+            store.display(v.get()),
             "0x[01, 02, 03, 04, 0a, 0b, 0c, 0d]",
         );
     }
@@ -981,7 +979,7 @@ mod tests {
     fn display_vector() {
         let store = Storage::default();
         let vp = store.put_vector([1i64, 2].into_iter());
-        let vo = store.get(vp);
+        let vo = vp.get();
         let v = vo.as_vector().unwrap();
         let p0 = v.offset(0).unwrap();
         let p1 = v.offset(1).unwrap();
@@ -992,7 +990,7 @@ mod tests {
     #[test]
     fn display_nil() {
         let store = Storage::default();
-        let vo = store.get(Ptr::nil());
+        let vo = Ptr::nil().get();
         // Symbols are canonicalized to uppercase:
         assert_eq!(store.display(vo), "nil");
     }
