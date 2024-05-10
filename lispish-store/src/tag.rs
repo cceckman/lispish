@@ -14,7 +14,6 @@ pub enum Tag {
     Pair = Self::PAIR,
 
     Vector = Self::VECTOR,
-    String = Self::STRING,
 }
 
 impl Tag {
@@ -28,7 +27,6 @@ impl Tag {
     const PAIR: u8 = 5;
 
     const VECTOR: u8 = 6;
-    const STRING: u8 = 7;
 }
 
 impl From<u8> for Tag {
@@ -41,7 +39,6 @@ impl From<u8> for Tag {
             Self::SYMBOL => Tag::Symbol,
             Self::PAIR => Tag::Pair,
             Self::VECTOR => Tag::Vector,
-            Self::STRING => Tag::String,
             v => unreachable!("invalid tag value {v}"),
         }
     }

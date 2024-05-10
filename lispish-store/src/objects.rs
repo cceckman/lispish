@@ -42,7 +42,6 @@ impl std::fmt::Display for StoredPtr {
             Tag::Pair => "obj",
             Tag::Bytes => "byt",
             Tag::Vector => "vec",
-            Tag::String => "str",
         };
         write!(f, "{}#{}", tag, self.idx())
     }
@@ -60,7 +59,6 @@ impl std::str::FromStr for StoredPtr {
                 "obj" => Tag::Pair,
                 "vec" => Tag::Vector,
                 "byt" => Tag::Bytes,
-                "str" => Tag::String,
                 _ => return Err(format!("invalid tag {}", tag)),
             };
             let idx: usize = number
@@ -261,7 +259,6 @@ impl<'a> Bind<'a> for Object<'a> {
                     start: Ptr::bind(store, v.start),
                 }
             }),
-            _ => todo!(),
         }
     }
 }

@@ -2,6 +2,7 @@ use std::collections::{HashMap, VecDeque};
 
 use dot_writer::Attributes;
 use dot_writer::DotWriter;
+use maud::PreEscaped;
 use std::io::Write;
 use std::process::Stdio;
 
@@ -23,6 +24,13 @@ pub struct ObjectFormat {
 }
 
 pub type ObjectFormats = HashMap<StoredPtr, ObjectFormat>;
+
+fn render_vector_element(i: usize, ptr: Ptr) -> PreEscaped<String> {
+    maud::html!(tr {
+        td { (i) }
+        td port=(format!("port{i}")) { (ptr) }
+    })
+}
 
 fn render_node<'a>(
     store: &'a Storage,
@@ -62,7 +70,7 @@ fn render_node<'a>(
     let name = get_name(&it);
 
     fn single_value(v: impl std::fmt::Display) -> maud::PreEscaped<String> {
-        maud::html!(td colspan="2" { (v) })
+        maud::html!(tr { td colspan="2" { (v) } })
     }
 
     let value: maud::PreEscaped<String> = match obj {
@@ -70,22 +78,26 @@ fn render_node<'a>(
         Object::Integer(v) => single_value(v),
         Object::Float(v) => single_value(v),
         Object::Symbol(v) => single_value(store.get_symbol(v)),
-        Object::Pair(Pair { car, cdr }) => maud::html!(
-                    td port="car" { (car) }
-                    td port="cdr" { (cdr) }
-        ),
-        Object::Bytes(b) => maud::html!(
-                    td { (format!("{:x?}", &b[..4])) }
-                    td { (format!("{:x?}", &b[4..])) }
-        ),
-        Object::Vector(v) => todo!(),
+        Object::Pair(Pair { car, cdr }) => maud::html!( tr {
+                        td port="car" { (car) }
+                        td port="cdr" { (cdr) }
+        }),
+        Object::Bytes(b) => maud::html!(tr {
+                        td { (format!("{:x?}", &b[..4])) }
+                        td { (format!("{:x?}", &b[4..])) }
+        }),
+        Object::Vector(v) => maud::html! {
+            @for (i, o) in v.enumerate() {
+                (render_vector_element(i, o))
+            }
+        },
     };
     node.set_html(&format!(
         "<{}>",
         maud::html!(
             table {
                 (name)
-                tr { (value) }
+                (value)
             }
         )
         .into_string()
@@ -120,6 +132,30 @@ fn render_node<'a>(
             }
         }
     };
+    if let Object::Vector(v) = obj {
+        for (i, ptr) in v.enumerate() {
+            let port = format!("port{i}");
+            if ptr.is_nil() {
+                continue;
+            }
+            // We always visit successors, even if we aren't going to render them,
+            // so we get an accurate count for stats.
+            result.push(ptr);
+
+            if ptr.is_symbol() {
+                // Symbols are addressed by their intern ID, not by an object.
+                // Generate a unique node for each visit.
+                // Unique them (so we don't have long edges to the definitions)
+                let (id, _) = render_node(store, object_meta, graph, ptr);
+                graph.edge(port, id);
+                result.push(ptr);
+            } else {
+                // Need to render the target node on the next pass.
+                let name = node_for_ptr(ptr);
+                graph.edge(port, name);
+            }
+        }
+    }
     (node_id, result)
 }
 
