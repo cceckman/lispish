@@ -969,10 +969,7 @@ mod tests {
         let store = Storage::default();
         let v = store.put([1, 2, 3, 4, 0xa, 0xb, 0xc, 0xd]);
         // Symbols are canonicalized to uppercase:
-        assert_eq!(
-            store.display(v.get()),
-            "0x[01, 02, 03, 04, 0a, 0b, 0c, 0d]",
-        );
+        assert_eq!(store.display(v.get()), "0x[01, 02, 03, 04, 0a, 0b, 0c, 0d]",);
     }
 
     #[test]

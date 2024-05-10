@@ -46,7 +46,7 @@ fn render_node<'a>(
     };
     let node_id = node.id();
 
-    let obj = store.get(it);
+    let obj = it.get();
     node.set_shape(dot_writer::Shape::None);
 
     let get_name = |ptr: &Ptr| {

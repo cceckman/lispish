@@ -82,7 +82,6 @@ pub fn make_byte_vector(store: &Storage, bytes: impl IntoIterator<Item = u8>) ->
 
 struct ByteVectorReader<'a> {
     vector: Vector<'a>,
-    store: &'a Storage,
     buffer: [u8; 8],
     consumed: i64,
     max: i64,
@@ -100,7 +99,7 @@ impl<'a> Iterator for ByteVectorReader<'a> {
             let b = self.vector.next()?;
             // We checked the object type at construction,
             // so we won't really early-return here.
-            self.buffer = self.store.get(b).as_bytes()?;
+            self.buffer = b.get().as_bytes()?;
         }
         let byte = self.buffer[idx];
         self.consumed += 1;
@@ -109,22 +108,19 @@ impl<'a> Iterator for ByteVectorReader<'a> {
 }
 
 /// Read a byte-vector / string.
-pub fn read_byte_vector<'a>(
-    store: &'a Storage,
-    byte_vector: Ptr<'a>,
-) -> Result<impl 'a + Iterator<Item = u8>, Error<'a>> {
+pub fn read_byte_vector(byte_vector: Ptr) -> Result<impl '_ + Iterator<Item = u8>, Error> {
     let Pair {
         car: lptr,
         cdr: vptr,
-    } = store
-        .get(byte_vector)
+    } = byte_vector
+        .get()
         .as_pair()
         .ok_or(Error::new("bytevector head is not a pair", byte_vector))?;
-    let len = store.get(lptr).as_integer().ok_or(Error::new(
+    let len = lptr.get().as_integer().ok_or(Error::new(
         "bytevector length is not an integer",
         byte_vector,
     ))?;
-    let vector = store.get(vptr).as_vector().ok_or(Error::new(
+    let vector = vptr.get().as_vector().ok_or(Error::new(
         "bytevector contents are not a vector",
         byte_vector,
     ))?;
@@ -134,7 +130,6 @@ pub fn read_byte_vector<'a>(
 
     Ok(ByteVectorReader {
         vector,
-        store,
         buffer: Default::default(),
         consumed: 0,
         max: len,
@@ -155,12 +150,12 @@ mod tests {
         let Pair {
             car: lptr,
             cdr: vptr,
-        } = store.get(p).as_pair().unwrap();
-        let got_len = store.get(lptr).as_integer().unwrap();
+        } = p.get().as_pair().unwrap();
+        let got_len = lptr.get().as_integer().unwrap();
         assert_eq!(got_len, S.len() as i64);
 
-        let Vector { start, .. } = store.get(vptr).as_vector().unwrap();
-        let data = store.get(start).as_bytes().unwrap();
+        let Vector { start, .. } = vptr.get().as_vector().unwrap();
+        let data = start.get().as_bytes().unwrap();
         assert_eq!(&data, &S[0..8]);
     }
 
@@ -170,7 +165,7 @@ mod tests {
 
         let store = Storage::default();
         let p = make_byte_vector(&store, S.as_bytes().iter().cloned());
-        let got: Vec<u8> = read_byte_vector(&store, p).unwrap().collect();
+        let got: Vec<u8> = read_byte_vector(p).unwrap().collect();
         assert_eq!(&got, S.as_bytes());
     }
 }
