@@ -20,11 +20,26 @@ pub enum Object<'a> {
 }
 
 /// An ID for a stored object: a combination of pointer and type-tag.
-#[derive(Clone, Copy, Hash, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 pub struct Ptr<'a> {
     pub(super) raw: StoredPtr,
-    store: PhantomData<&'a Storage>,
+    // Nil pointers can be unassociated with a store;
+    // this permits the default constructor.
+    store: Option<&'a Storage>,
 }
+
+impl PartialEq for Ptr<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        let raw = self.raw == other.raw;
+        raw && match (self.store, other.store) {
+            (Some(a), Some(b)) => std::ptr::eq(a, b),
+            (None, None) => true,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Ptr<'_> {}
 
 impl std::fmt::Display for Ptr<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -112,7 +127,7 @@ impl Default for Ptr<'_> {
     fn default() -> Self {
         Ptr {
             raw: StoredPtr { combined_tag: 0 },
-            store: PhantomData,
+            store: None,
         }
     }
 }
@@ -341,10 +356,10 @@ pub struct Symbol(pub DefaultSymbol);
 impl<'a> Bind<'a> for Ptr<'a> {
     type Free = StoredPtr;
 
-    fn bind(_store: &'a Storage, raw: Self::Free) -> Self {
+    fn bind(store: &'a Storage, raw: Self::Free) -> Self {
         Self {
             raw,
-            store: PhantomData,
+            store: if raw.is_nil() { None } else { Some(store) },
         }
     }
 }
