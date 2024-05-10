@@ -52,6 +52,7 @@ use std::ops::DerefMut;
 use std::{cmp::max, collections::VecDeque};
 mod objects;
 pub use objects::*;
+pub mod vectors;
 use string_interner::DefaultSymbol;
 use string_interner::Symbol as _;
 
