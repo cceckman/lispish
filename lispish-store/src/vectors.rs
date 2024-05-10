@@ -32,6 +32,7 @@ impl std::fmt::Display for Error<'_> {
 }
 
 /// A converter from iterator-over-bytes to iterator-over-chunks.
+#[derive(Clone)]
 struct BytesToChunks<I> {
     it: I,
 }
@@ -62,6 +63,27 @@ where
     }
 }
 
+/// Compare two byte-vectors for equality.
+///
+/// NOTE: This does not run in constant time.
+/// This is good for string comparisons, bad for cryptography.
+pub fn compare_byte_vector_fast<'a>(a: Ptr<'a>, b: Ptr<'a>) -> Result<bool, Error<'a>> {
+    let a = read_byte_vector(a)?;
+    let b = read_byte_vector(b)?;
+    Ok(|| -> bool {
+        if a.max != b.max {
+            // Length mismatch
+            return false;
+        }
+        for (a, b) in a.zip(b) {
+            if a != b {
+                return false;
+            }
+        }
+        true
+    }())
+}
+
 /// A byte-vector consists of a pair: (length in bytes, vector of 8B chunks).
 ///
 /// This is also used for strings.
@@ -80,7 +102,8 @@ pub fn make_byte_vector(store: &Storage, bytes: impl IntoIterator<Item = u8>) ->
     store.put(Pair::cons(length, vptr))
 }
 
-struct ByteVectorReader<'a> {
+#[derive(Clone)]
+pub struct ByteVectorReader<'a> {
     vector: Vector<'a>,
     buffer: [u8; 8],
     consumed: i64,
@@ -108,7 +131,7 @@ impl<'a> Iterator for ByteVectorReader<'a> {
 }
 
 /// Read a byte-vector / string.
-pub fn read_byte_vector(byte_vector: Ptr) -> Result<impl '_ + Iterator<Item = u8>, Error> {
+pub fn read_byte_vector(byte_vector: Ptr) -> Result<ByteVectorReader, Error> {
     let Pair {
         car: lptr,
         cdr: vptr,
@@ -142,7 +165,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn store_string() {
+    fn store_bytes() {
         const S: &[u8] = b"Hello everybody! I'm so happy to see you";
 
         let store = Storage::default();
@@ -160,12 +183,12 @@ mod tests {
     }
 
     #[test]
-    fn reproduce_string() {
-        const S: &str = "Hello everybody! I'm so happy to see you";
+    fn reproduce_bytes() {
+        const S: &[u8] = b"Hello everybody! I'm so happy to see you";
 
         let store = Storage::default();
-        let p = make_byte_vector(&store, S.as_bytes().iter().cloned());
+        let p = make_byte_vector(&store, S.iter().cloned());
         let got: Vec<u8> = read_byte_vector(p).unwrap().collect();
-        assert_eq!(&got, S.as_bytes());
+        assert_eq!(&got, S);
     }
 }

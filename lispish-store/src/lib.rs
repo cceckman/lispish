@@ -19,9 +19,14 @@
 //! -   Vector: A reference to a set of contiguously-allocated _objects_,
 //!     all of the same type, which are neither nil nor symbol.
 //! -   Symbol: an entry in the designated, interned symbol table.
-//! -   String: A vector of bytes representing a valid UTF-8 string.
-//!     TODO: Necessary to have as a distinct top-level type, representing UTF-8?
-//!     Or can we treat it as a structure: (bytelength (vector))
+//!
+//! In addition, there are some distinguished _constructs_ that the storage
+//! layer uses.
+//! -   A ByteVector consists of a (length, vector-of-bytes) tuple.
+//! -   The symbol table is a vector of Strings.
+//!     The storage layer preserves and maintains its root independent of
+//!     the stack pointer(s).
+//! -   TODO: A String is a ByteVector that contains only UTF-8 codepoints.
 //!
 //! ## Old notes
 //!
@@ -47,14 +52,13 @@
 
 mod bitset;
 
-use std::cell::{Ref, RefCell, RefMut};
+use std::cell::{RefCell, RefMut};
 use std::ops::DerefMut;
 use std::{cmp::max, collections::VecDeque};
 mod objects;
 pub use objects::*;
-pub mod vectors;
-use string_interner::DefaultSymbol;
-use string_interner::Symbol as _;
+mod symbols;
+mod vectors;
 
 use self::bitset::BitSet;
 pub use self::render::ObjectFormat;
@@ -67,21 +71,37 @@ mod tag;
 pub use tag::*;
 
 /// Storage allows representing all persistent objects.
-#[derive(Default)]
 pub struct Storage {
     generation: RefCell<Generation>,
 
-    // TODO: Understand & implement this myself.
-    // Because symbols are interned, they are not generationed/lifetime-bound.
-    symbols: RefCell<string_interner::DefaultStringInterner>,
-
+    /// Root of the main object tree.
     root: RefCell<StoredPtr>,
+
+    /// Auxiliary object tree: the symbol table.
+    /// A vector of strings.
+    /// (Note: try to re-GC after declaring each symbol!)
+    symbols: RefCell<StoredPtr>,
 
     high_water: StorageStats,
 
     /// Node metadata.
     /// These provide useful debugging info, like "this is the root of the stack".
     labels: RefCell<ObjectFormats>,
+}
+
+impl Default for Storage {
+    fn default() -> Self {
+        let s = Self {
+            generation: Default::default(),
+            root: Default::default(),
+            symbols: Default::default(),
+            high_water: Default::default(),
+            labels: Default::default(),
+        };
+        let symbols = s.put_vector::<Pair>(std::iter::empty());
+        *s.symbols.borrow_mut() = symbols.raw;
+        s
+    }
 }
 
 /// Data that exists for a single "generation" (between GCs).
@@ -161,24 +181,6 @@ impl Generation {
         assert!(idx < self.objects.len());
         self.objects[idx].pair = pair;
     }
-
-    /// Put a vector of objects.
-    /// In this case, all the tags are the same, because it's a single T.
-    fn put_vector<T>(&mut self, objects: impl Iterator<Item = T>) -> StoredPtr
-    where
-        T: UniformVector,
-    {
-        // TODO: Need to get tag even from an empty T...eh?
-        let idx = self.objects.len();
-        self.objects.extend(objects.map(|v: T| v.store()));
-        let length = self.objects.len() - idx;
-        let ptr = StoredPtr::new(idx, T::tag());
-        let vec = StoredVector {
-            length: length as u32,
-            start: ptr,
-        };
-        self.put(StoredValue { vector: vec }, Tag::Vector)
-    }
 }
 
 /// Bind is a trait for binding stored types to the storage that holds them:
@@ -204,24 +206,24 @@ impl Storage {
     }
 
     pub fn current_stats(&self) -> StorageStats {
+        let sym_ptr: Ptr = self.bind(*self.symbols.borrow());
+        let symbols = sym_ptr.get().as_vector().map(|v| v.length).unwrap_or(0) as usize;
+
         let gen = self.generation.borrow();
         StorageStats {
             // Discount one object, the reserved nil index.
             objects: gen.objects.len() - 1,
-            symbols: self.symbols.borrow().len(),
+            symbols,
         }
     }
     pub fn max_stats(&self) -> StorageStats {
         self.current_stats().max(&self.high_water)
     }
 
-    /// Add a symbol to the symbol table.
-    pub fn put_symbol(&self, symbol: &str) -> Ptr {
-        let s = self
-            .symbols
-            .borrow_mut()
-            .get_or_intern(symbol.to_uppercase());
-        self.bind(StoredPtr::new(s.to_usize(), Tag::Symbol))
+    /// Add a symbol to the symbol table,
+    /// or return the pointer to this symbol if already present.
+    pub fn put_symbol(&self, symbol: impl symbols::SymbolInput) -> Ptr {
+        symbols::put(self, symbol)
     }
 
     /// Insert a uniform vector into the storage.
@@ -230,8 +232,22 @@ impl Storage {
     where
         T: UniformVector,
     {
+        // We have to acquire & release borrow_mut repeatedly here,
+        // because "get the object" on the iterator may require borrowing
+        // the generation to resolve the object.
+        let start_idx = self.generation.borrow().objects.len();
+        for object in v {
+            let storeable = object.store();
+            self.generation.borrow_mut().put(storeable, T::tag());
+        }
         let mut gen = self.generation.borrow_mut();
-        let p = gen.put_vector(v);
+        let length = gen.objects.len() - start_idx;
+        let ptr = StoredPtr::new(start_idx, T::tag());
+        let vec = StoredVector {
+            length: length as u32,
+            start: ptr,
+        };
+        let p = gen.put(StoredValue { vector: vec }, Tag::Vector);
         self.bind(p)
     }
 
@@ -241,23 +257,6 @@ impl Storage {
         let stored_vector = self.generation.borrow().get(v.raw).as_vector(v.raw)?;
         let ptr = stored_vector.offset(idx)?;
         Some(self.bind(ptr))
-    }
-
-    /// Retrieve a symbol to the symbol table.
-    pub fn get_symbol(&self, idx: Symbol) -> Ref<'_, str> {
-        let symtab = self.symbols.borrow();
-        Ref::map(symtab, |v| {
-            v.resolve(idx.0).expect("retrieved nonexistent symbol")
-        })
-    }
-
-    /// Retrieve a symbol to the symbol table.
-    pub fn get_symbol_ptr(&self, ptr: Ptr) -> Ref<'_, str> {
-        let symbol = DefaultSymbol::try_from_usize(ptr.raw.idx()).unwrap();
-        let symtab = self.symbols.borrow();
-        Ref::map(symtab, |v| {
-            v.resolve(symbol).expect("retrieved nonexistent symbol")
-        })
     }
 
     /// Replace the given pair with a new one.
@@ -282,7 +281,7 @@ impl Storage {
         if ptr.is_nil() {
             Object::Nil
         } else if ptr.is_symbol() {
-            Object::Symbol(Symbol(DefaultSymbol::try_from_usize(ptr.idx()).unwrap()))
+            Object::Symbol(Symbol::bind(self, ptr.idx()))
         } else {
             let stored = self.generation.borrow().get(ptr.raw);
             Object::bind(self, (ptr.raw, stored))
@@ -299,6 +298,20 @@ impl Storage {
         *self.root.borrow_mut() = root.raw;
     }
 
+    /// Get the symbol table.
+    fn symbols(&self) -> Vector {
+        self.bind::<Ptr>(*self.symbols.borrow())
+            .get()
+            .as_vector()
+            .unwrap()
+    }
+
+    /// Update the symbol table.
+    fn set_symbols(&self, new: Ptr) {
+        assert!(new.is_vector());
+        *self.symbols.borrow_mut() = new.raw;
+    }
+
     /// Run a garbage-collection pass, based on the provided roots.
     pub fn gc(&mut self) {
         let current_stats = self.current_stats();
@@ -308,9 +321,12 @@ impl Storage {
         // Soft-destructure:
         let last_gen = self.generation.take();
         let mut root = self.root.borrow_mut();
+        let mut symbols = self.symbols.borrow_mut();
         let mut labels = self.labels.borrow_mut();
 
-        let mut roots = [root.deref_mut()];
+        // We intentionally put the symbol table first,
+        // so that nice ~stable vector can land early.
+        let mut roots = [symbols.deref_mut(), root.deref_mut()];
         *self.generation.get_mut() = gc_internal(last_gen, &mut roots, &mut labels);
 
         tracing::trace!("stats after GC: {:?}", self.current_stats());
@@ -322,7 +338,7 @@ impl Storage {
             Object::Nil => "nil".to_owned(),
             Object::Integer(i) => format!("{}", i),
             Object::Float(i) => format!("{}", i),
-            Object::Symbol(j) => format!("{}", self.get_symbol(j)),
+            Object::Symbol(j) => j.get().collect(),
             Object::Pair(Pair { car, cdr }) => format!("({car}, {cdr})"),
             Object::Bytes(b) => format!("0x{b:02x?}"),
             Object::Vector(b) => {
@@ -345,10 +361,11 @@ impl Storage {
     ///
     /// Note, though, this does not and cannot check the type of the pointer;
     /// we're trusting that the tag in the string matches the actual object.
-    pub fn lookup(&self, object_id: &str) -> Result<Ptr<'_>, String> {
-        let stored: StoredPtr = object_id.parse()?;
+    pub fn lookup(&self, object_id: impl AsRef<str>) -> Result<Ptr<'_>, String> {
+        let stats = self.current_stats();
+        let stored: StoredPtr = object_id.as_ref().parse()?;
         let max_obj = self.generation.borrow().objects.len();
-        let max_sym = self.symbols.borrow().len();
+        let max_sym = stats.symbols;
 
         let symbol_ok = stored.is_symbol() && stored.idx() < max_sym;
         let object_ok = !stored.is_symbol() && stored.idx() < max_obj;
@@ -723,7 +740,7 @@ mod tests {
         let one = store.put(Object::Integer(1));
         let _ = store.put(Object::Float(3.0));
         let two = store.put(Object::Float(2.0));
-        assert_eq!(store.current_stats().objects, 3);
+        let pre_stats = store.current_stats();
 
         {
             let root = store.put(Pair::cons(one, two));
@@ -731,7 +748,7 @@ mod tests {
         }
         store.gc();
 
-        assert_eq!(store.current_stats().objects, 3);
+        assert_eq!(store.current_stats(), pre_stats);
 
         let Pair { car, cdr } = store
             .root()
@@ -765,6 +782,14 @@ mod tests {
         let b = store.put(B);
 
         // '(a a b) in one list; '(b b) in another, using the same final cell.
+        // Objects are:
+        // a
+        // b
+        // (b ())
+        // (a (b ()))
+        // (a (a (b ())))
+        // (b (b ()))
+        // and the root combining those two trees.
         let stack = {
             let ls1 = store.put(Pair::cons(b, Object::nil()));
             let lsa1 = store.put(Pair::cons(a, ls1));
@@ -774,7 +799,6 @@ mod tests {
 
             Pair::cons(lsa, lsb)
         };
-        assert_eq!(store.current_stats().objects, 6);
 
         store.set_root(store.put(stack));
         let pre_stats = store.current_stats();
@@ -786,10 +810,15 @@ mod tests {
             .try_into()
             .expect("root should be a pair");
         store.set_root(lsb);
+        // Objects are:
+        // b
+        // (b ())
+        // (b (b ()))
+        // with no additional root (we kept one of the branches as the root.)
         store.gc();
         let stack_top = store.root();
         // ('b b ()): objects are b, (b ()), and (b (b ()))
-        assert_eq!(store.current_stats().objects, 3);
+        assert_eq!(pre_stats.objects - store.current_stats().objects, 4);
 
         // Look, this will fail to compile- the lifetime of stack[] has to have ended:
         // let _ = store.get(stack[0]);
@@ -823,9 +852,9 @@ mod tests {
         // Symbols have a separate index space!
         let define = store.put_symbol("define");
         let lambda = store.put_symbol("lambda");
-        let _cool = store.put_symbol("cool");
+        let cool = store.put_symbol("cool").to_string();
         let a = store.put(1i64);
-        let _b = store.put(2i64);
+        let b = store.put(2i64).to_string();
 
         // We won't hold on to object b or symbol cool.
         let x = store.put(Pair::cons(define, Ptr::nil()));
@@ -833,10 +862,11 @@ mod tests {
         let root = store.put(Pair::cons(a, y));
         store.set_root(root);
 
-        assert_eq!(store.current_stats().objects, 5);
         store.gc();
-        // Keep: a, y, x, root.
-        assert_eq!(store.current_stats().objects, 4);
+        // Lost b:
+        store.lookup(b).unwrap_err();
+        // But not cool:
+        store.lookup(cool).unwrap();
     }
 
     #[test]
@@ -1003,7 +1033,7 @@ mod tests {
     fn lookup_object_ok() {
         let store = Storage::default();
         let v = store.put(1);
-        let ptr = store.lookup(&v.to_string()).unwrap();
+        let ptr = store.lookup(v.to_string()).unwrap();
         assert_eq!(ptr, v);
     }
 
@@ -1011,7 +1041,7 @@ mod tests {
     fn lookup_symbol_ok() {
         let store = Storage::default();
         let v = store.put_symbol("hello");
-        let ptr = store.lookup(&v.to_string()).unwrap();
+        let ptr = store.lookup(v.to_string()).unwrap();
         assert_eq!(ptr, v);
     }
 
@@ -1020,13 +1050,13 @@ mod tests {
         let store = Storage::default();
         const INTS: &[char] = &['0', '1', '2', '3', '4', '5', '6', '7', '8'];
         let v = format!("{}", store.put(1)).replace(INTS, "9");
-        store.lookup(&v.to_string()).unwrap_err();
+        store.lookup(v).unwrap_err();
     }
 
     #[test]
     fn lookup_invalid_symbol() {
         let v = Storage::default().put_symbol("hello").to_string();
         let new_store = Storage::default();
-        new_store.lookup(&v).unwrap_err();
+        new_store.lookup(v).unwrap_err();
     }
 }

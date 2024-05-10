@@ -1,6 +1,4 @@
-use string_interner::{DefaultSymbol, Symbol as InternerSymbol};
-
-use crate::StoredVector;
+use crate::{symbols, StoredVector};
 
 use super::{Bind, Storage, StoredPair, StoredPtr, StoredValue, Tag};
 
@@ -11,7 +9,7 @@ pub enum Object<'a> {
     Nil = Tag::Nil as u8,
     Integer(Integer) = Tag::Integer as u8,
     Float(Float) = Tag::Float as u8,
-    Symbol(Symbol) = Tag::Symbol as u8,
+    Symbol(Symbol<'a>) = Tag::Symbol as u8,
     Pair(Pair<'a>) = Tag::Pair as u8,
     Bytes(Bytes) = Tag::Bytes as u8,
     Vector(Vector<'a>) = Tag::Vector as u8,
@@ -121,6 +119,10 @@ impl Ptr<'_> {
     pub fn is_pair(&self) -> bool {
         self.raw.is_pair()
     }
+    #[inline]
+    pub fn is_vector(&self) -> bool {
+        self.raw.is_vector()
+    }
 
     #[inline]
     pub(super) fn tag(&self) -> Tag {
@@ -161,6 +163,13 @@ impl<'a> Object<'a> {
     pub fn as_integer(&self) -> Option<Integer> {
         match self {
             Object::Integer(p) => Some(*p),
+            _ => None,
+        }
+    }
+
+    pub fn as_symbol(&self) -> Option<Symbol> {
+        match self {
+            Object::Symbol(p) => Some(*p),
             _ => None,
         }
     }
@@ -211,8 +220,8 @@ impl<'a> From<Pair<'a>> for Object<'a> {
     }
 }
 
-impl From<Symbol> for Object<'_> {
-    fn from(value: Symbol) -> Self {
+impl<'a> From<Symbol<'a>> for Object<'a> {
+    fn from(value: Symbol<'a>) -> Self {
         Object::Symbol(value)
     }
 }
@@ -269,7 +278,7 @@ impl<'a> Bind<'a> for Object<'a> {
             Tag::Integer => Object::Integer(unsafe { v.integer }),
             Tag::Float => Object::Float(unsafe { v.float }),
             Tag::Bytes => Object::Bytes(unsafe { v.bytes }),
-            Tag::Symbol => Object::Symbol(Symbol(DefaultSymbol::try_from_usize(p.idx()).unwrap())),
+            Tag::Symbol => Object::Symbol(Symbol::bind(store, p.idx())),
             Tag::Pair => Object::Pair({
                 let p = unsafe { v.pair };
                 Pair {
@@ -360,8 +369,51 @@ impl<'a> Bind<'a> for Vector<'a> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Symbol(pub DefaultSymbol);
+#[derive(Clone, Copy)]
+pub struct Symbol<'a> {
+    /// Symbols are represented by their index in the symbol table.
+    idx: usize,
+    store: &'a Storage,
+}
+
+impl Symbol<'_> {
+    pub fn idx(&self) -> usize {
+        self.idx
+    }
+}
+
+impl<'a> Symbol<'a> {
+    pub(super) fn store(&self) -> &'a Storage {
+        self.store
+    }
+
+    pub fn get(self) -> impl 'a + Iterator<Item = char> {
+        symbols::get(self)
+    }
+}
+
+impl std::fmt::Debug for Symbol<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.idx)
+    }
+}
+
+impl PartialEq for Symbol<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        let idx_eq = self.idx == other.idx;
+        idx_eq && std::ptr::eq(self.store, other.store)
+    }
+}
+
+impl Eq for Symbol<'_> {}
+
+impl<'a> Bind<'a> for Symbol<'a> {
+    type Free = usize;
+
+    fn bind(store: &'a Storage, raw: Self::Free) -> Self {
+        Self { idx: raw, store }
+    }
+}
 
 impl<'a> Bind<'a> for Ptr<'a> {
     type Free = StoredPtr;

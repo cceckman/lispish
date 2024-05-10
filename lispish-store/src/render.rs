@@ -33,7 +33,6 @@ fn render_vector_element(i: usize, ptr: Ptr) -> PreEscaped<String> {
 }
 
 fn render_node<'a>(
-    store: &'a Storage,
     object_meta: &ObjectFormats,
     graph: &mut dot_writer::Scope,
     it: Ptr<'a>,
@@ -77,7 +76,7 @@ fn render_node<'a>(
         Object::Nil => unreachable!("must not queue to nil pointer"),
         Object::Integer(v) => single_value(v),
         Object::Float(v) => single_value(v),
-        Object::Symbol(v) => single_value(store.get_symbol(v)),
+        Object::Symbol(v) => single_value(v.get().collect::<String>()),
         Object::Pair(Pair { car, cdr }) => maud::html!( tr {
                         td port="car" { (car) }
                         td port="cdr" { (cdr) }
@@ -122,7 +121,7 @@ fn render_node<'a>(
                 // Symbols are addressed by their intern ID, not by an object.
                 // Generate a unique node for each visit.
                 // Unique them (so we don't have long edges to the definitions)
-                let (id, _) = render_node(store, object_meta, graph, ptr);
+                let (id, _) = render_node(object_meta, graph, ptr);
                 graph.edge(port, id);
                 result.push(ptr);
             } else {
@@ -146,7 +145,7 @@ fn render_node<'a>(
                 // Symbols are addressed by their intern ID, not by an object.
                 // Generate a unique node for each visit.
                 // Unique them (so we don't have long edges to the definitions)
-                let (id, _) = render_node(store, object_meta, graph, ptr);
+                let (id, _) = render_node(object_meta, graph, ptr);
                 graph.edge(port, id);
                 result.push(ptr);
             } else {
@@ -193,7 +192,7 @@ fn render_gv(store: &Storage, object_meta: &ObjectFormats) -> (StorageStats, Vec
             }
             stats.objects += 1;
 
-            let (_, next) = render_node(store, object_meta, &mut graph, it);
+            let (_, next) = render_node(object_meta, &mut graph, it);
             queue.extend(next);
         }
     }
