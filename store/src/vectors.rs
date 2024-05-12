@@ -31,6 +31,62 @@ impl std::fmt::Display for Error<'_> {
     }
 }
 
+/// A ByteVector is a set of contiguously-stored bytes.
+#[derive(Debug, Clone, Copy)]
+pub struct ByteVector<'a> {
+    pub vector: Vector<'a>,
+    pub byte_length: i64,
+}
+
+impl<'a> TryFrom<Ptr<'a>> for ByteVector<'a> {
+    type Error = Error<'a>;
+    fn try_from(ptr: Ptr<'a>) -> Result<Self, Self::Error> {
+        let Pair {
+            car: lptr,
+            cdr: vptr,
+        } = ptr
+            .get()
+            .as_pair()
+            .ok_or(Error::new("bytevector head is not a pair", ptr))?;
+        let byte_length = lptr
+            .get()
+            .as_integer()
+            .ok_or(Error::new("bytevector length is not an integer", ptr))?;
+        let vector = vptr
+            .get()
+            .as_vector()
+            .ok_or(Error::new("bytevector contents are not a vector", ptr))?;
+        if vector.start.tag() != Tag::Bytes {
+            Err(Error::new("bytevector contents are not bytes", ptr))?;
+        }
+
+        Ok(ByteVector {
+            vector,
+            byte_length,
+        })
+    }
+}
+
+impl<'a> IntoIterator for ByteVector<'a> {
+    type Item = u8;
+    type IntoIter = ByteVectorReader<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        ByteVectorReader {
+            vector: self.vector,
+            buffer: Default::default(),
+            consumed: 0,
+            max: self.byte_length,
+        }
+    }
+}
+
+impl<'a> ByteVector<'a> {
+    pub fn iter(&self) -> impl 'a + Iterator<Item = u8> {
+        self.into_iter()
+    }
+}
+
 /// A converter from iterator-over-bytes to iterator-over-chunks.
 #[derive(Clone)]
 struct BytesToChunks<I> {
@@ -68,8 +124,15 @@ where
 /// NOTE: This does not run in constant time.
 /// This is good for string comparisons, bad for cryptography.
 pub fn compare_byte_vector_fast<'a>(a: Ptr<'a>, b: Ptr<'a>) -> Result<bool, Error<'a>> {
-    let a = read_byte_vector(a)?;
-    let b = read_byte_vector(b)?;
+    let a = {
+        let bv: ByteVector = a.try_into()?;
+        bv.into_iter()
+    };
+    let b = {
+        let bv: ByteVector = b.try_into()?;
+        bv.into_iter()
+    };
+
     Ok(|| -> bool {
         if a.max != b.max {
             // Length mismatch
@@ -130,35 +193,6 @@ impl<'a> Iterator for ByteVectorReader<'a> {
     }
 }
 
-/// Read a byte-vector / string.
-pub fn read_byte_vector(byte_vector: Ptr) -> Result<ByteVectorReader, Error> {
-    let Pair {
-        car: lptr,
-        cdr: vptr,
-    } = byte_vector
-        .get()
-        .as_pair()
-        .ok_or(Error::new("bytevector head is not a pair", byte_vector))?;
-    let len = lptr.get().as_integer().ok_or(Error::new(
-        "bytevector length is not an integer",
-        byte_vector,
-    ))?;
-    let vector = vptr.get().as_vector().ok_or(Error::new(
-        "bytevector contents are not a vector",
-        byte_vector,
-    ))?;
-    if vector.start.tag() != Tag::Bytes {
-        Err(Error::new("bytevector contents are not bytes", byte_vector))?;
-    }
-
-    Ok(ByteVectorReader {
-        vector,
-        buffer: Default::default(),
-        consumed: 0,
-        max: len,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::super::*;
@@ -170,14 +204,10 @@ mod tests {
 
         let store = Storage::default();
         let p = make_byte_vector(&store, S.iter().cloned());
-        let Pair {
-            car: lptr,
-            cdr: vptr,
-        } = p.get().as_pair().unwrap();
-        let got_len = lptr.get().as_integer().unwrap();
-        assert_eq!(got_len, S.len() as i64);
+        let bv: ByteVector = p.try_into().unwrap();
+        assert_eq!(bv.byte_length, S.len() as i64);
 
-        let Vector { start, .. } = vptr.get().as_vector().unwrap();
+        let Vector { start, .. } = bv.vector;
         let data = start.get().as_bytes().unwrap();
         assert_eq!(&data, &S[0..8]);
     }
@@ -188,7 +218,8 @@ mod tests {
 
         let store = Storage::default();
         let p = make_byte_vector(&store, S.iter().cloned());
-        let got: Vec<u8> = read_byte_vector(p).unwrap().collect();
+        let bv: ByteVector = p.try_into().unwrap();
+        let got: Vec<u8> = bv.into_iter().collect();
         assert_eq!(&got, S);
     }
 }

@@ -13,7 +13,7 @@
 //!
 
 use crate::{
-    vectors::{self, compare_byte_vector_fast, read_byte_vector},
+    vectors::{self, compare_byte_vector_fast, ByteVector},
     Ptr, Storage, StoredPtr, Symbol, Tag,
 };
 
@@ -130,8 +130,11 @@ pub fn get(symbol: Symbol) -> impl '_ + Iterator<Item = char> {
     let string = v
         .offset(symbol.idx())
         .expect("All symbol pointers bound to this store should be present in the symbol table");
-    let it = read_byte_vector(string)
-        .expect("All symbol entries in the table should be valid byte vectors");
+    let bv: ByteVector = string
+        .try_into()
+        .expect("all entries in the symbol table must be strings (ByteVectors)");
+    let it = bv.iter();
+
     SymbolReader {
         it,
         bytes: Default::default(),
