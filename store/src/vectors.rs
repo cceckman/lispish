@@ -1,12 +1,12 @@
 //! Additional routinames for manipulating vectors.
 //!
 
-use std::fmt::Debug;
+use std::{cmp::Ordering, fmt::Debug};
 
 use crate::{Bytes, Error, Pair, Ptr, Storage, Tag, Vector};
 
 /// A ByteVector is a set of contiguously-stored bytes.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ByteVector<'a> {
     pub vector: Vector<'a>,
     pub byte_length: i64,
@@ -59,6 +59,23 @@ impl<'a> ByteVector<'a> {
     pub fn iter(&self) -> impl 'a + Iterator<Item = u8> {
         self.into_iter()
     }
+
+    /// Compare the contents of the vectors.
+    pub fn content_cmp(&self, other: &ByteVector) -> Ordering {
+        if self.byte_length != other.byte_length {
+            return self.byte_length.cmp(&other.byte_length);
+        }
+        let a = self.iter();
+        let b = other.iter();
+
+        for (a, b) in a.zip(b) {
+            let cmp = a.cmp(&b);
+            if cmp != Ordering::Equal {
+                return cmp;
+            }
+        }
+        Ordering::Equal
+    }
 }
 
 /// A converter from iterator-over-bytes to iterator-over-chunks.
@@ -91,34 +108,6 @@ where
             None
         }
     }
-}
-
-/// Compare two byte-vectors for equality.
-///
-/// NOTE: This does not run in constant time.
-/// This is good for string comparisons, bad for cryptography.
-pub fn compare_byte_vector_fast<'a>(a: Ptr<'a>, b: Ptr<'a>) -> Result<bool, Error<'a>> {
-    let a = {
-        let bv: ByteVector = a.try_into()?;
-        bv.into_iter()
-    };
-    let b = {
-        let bv: ByteVector = b.try_into()?;
-        bv.into_iter()
-    };
-
-    Ok(|| -> bool {
-        if a.max != b.max {
-            // Length mismatch
-            return false;
-        }
-        for (a, b) in a.zip(b) {
-            if a != b {
-                return false;
-            }
-        }
-        true
-    }())
 }
 
 /// A byte-vector consists of a pair: (length in bytes, vector of 8B chunks).

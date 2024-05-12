@@ -57,9 +57,11 @@ use std::ops::DerefMut;
 use std::{cmp::max, collections::VecDeque};
 mod objects;
 pub use objects::*;
-mod symbols;
+use strings::to_bytes;
 mod strings;
+mod symbols;
 mod vectors;
+pub use vectors::ByteVector;
 
 use self::bitset::BitSet;
 pub use self::render::ObjectFormat;
@@ -340,8 +342,12 @@ impl Storage {
         *self.symbols.borrow_mut() = new.raw;
     }
 
-    pub fn put_string(&self, input impl Iterator<Item = char>) -> Ptr<'a> {
-        byte
+    pub fn put_string(&self, input: impl Iterator<Item = char>) -> Ptr<'_> {
+        self.put_bytes(to_bytes(input))
+    }
+
+    pub fn put_bytes(&self, input: impl Iterator<Item = u8>) -> Ptr<'_> {
+        vectors::make_byte_vector(self, input)
     }
 
     /// Run a garbage-collection pass, based on the provided roots.

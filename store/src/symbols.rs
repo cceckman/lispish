@@ -12,9 +12,11 @@
 //! (falling back to linear beyond that.)
 //!
 
+use std::cmp::Ordering;
+
 use crate::{
     strings::{to_chars, to_upper_bytes},
-    vectors::{self, compare_byte_vector_fast, ByteVector},
+    vectors::{self, ByteVector},
     Ptr, Storage, StoredPtr, Symbol, Tag,
 };
 
@@ -37,11 +39,15 @@ pub fn put(store: &Storage, symbol: impl SymbolInput) -> Ptr {
     let char_iter = symbol.get_iter();
     let byte_iter = to_upper_bytes(char_iter);
     let string = vectors::make_byte_vector(store, byte_iter);
+    let input: ByteVector = string
+        .try_into()
+        .expect("must be a byte vector, we just made it");
 
     for (i, ptr) in store.symbols().enumerate() {
-        let same = compare_byte_vector_fast(string, ptr)
-            .expect("all entries in the symbol table should be well-formed bytevectors");
-        if same {
+        let candidate: ByteVector = ptr
+            .try_into()
+            .expect("symbol table entry must be a byte vector");
+        if input.content_cmp(&candidate) == Ordering::Equal {
             return store.bind(StoredPtr::new(i, Tag::Symbol));
         }
     }

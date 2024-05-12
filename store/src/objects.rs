@@ -322,7 +322,7 @@ impl<'a> Pair<'a> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Vector<'a> {
     pub length: u32,
     pub start: Ptr<'a>,
