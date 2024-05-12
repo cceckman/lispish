@@ -58,6 +58,7 @@ use std::{cmp::max, collections::VecDeque};
 mod objects;
 pub use objects::*;
 mod symbols;
+mod strings;
 mod vectors;
 
 use self::bitset::BitSet;
@@ -69,6 +70,33 @@ mod render;
 
 mod tag;
 pub use tag::*;
+
+/// A zero-allocation error type.
+pub struct Error<'a> {
+    message: &'static str,
+    ptr: Ptr<'a>,
+}
+
+impl<'a> Error<'a> {
+    const fn new(format: &'static str, ptr: Ptr<'a>) -> Self {
+        Error {
+            message: format,
+            ptr,
+        }
+    }
+}
+
+impl std::fmt::Debug for Error<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "for object {}: {}", self.ptr, self.message)
+    }
+}
+
+impl std::fmt::Display for Error<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "for object {}: {}", self.ptr, self.message)
+    }
+}
 
 /// Storage allows representing all persistent objects.
 pub struct Storage {
@@ -310,6 +338,10 @@ impl Storage {
     fn set_symbols(&self, new: Ptr) {
         assert!(new.is_vector());
         *self.symbols.borrow_mut() = new.raw;
+    }
+
+    pub fn put_string(&self, input impl Iterator<Item = char>) -> Ptr<'a> {
+        byte
     }
 
     /// Run a garbage-collection pass, based on the provided roots.

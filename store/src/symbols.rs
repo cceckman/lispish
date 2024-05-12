@@ -13,6 +13,7 @@
 //!
 
 use crate::{
+    strings::{to_chars, to_upper_bytes},
     vectors::{self, compare_byte_vector_fast, ByteVector},
     Ptr, Storage, StoredPtr, Symbol, Tag,
 };
@@ -29,52 +30,12 @@ impl SymbolInput for &str {
     }
 }
 
-#[derive(Clone)]
-struct SymbolWriter<CharIter> {
-    chars: CharIter,
-    bytes: [u8; 4],
-    next_byte: u8,
-    last_byte: u8,
-}
-
-fn new_symbol_writer<CI: Iterator<Item = char>>(c: CI) -> impl Iterator<Item = u8> {
-    // Handle uppercasing here;
-    // this way we only have one layer of "iterate over chars",
-    // and they're always upper.
-    let chars = c.flat_map(|c| c.to_uppercase());
-    SymbolWriter {
-        chars,
-        bytes: Default::default(),
-        next_byte: 0,
-        last_byte: 0,
-    }
-}
-
-impl<CharIter> Iterator for SymbolWriter<CharIter>
-where
-    CharIter: Iterator<Item = char>,
-{
-    type Item = u8;
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.next_byte == self.last_byte {
-            // Try to refill.
-            let c = self.chars.next()?;
-            let buf = c.encode_utf8(&mut self.bytes);
-            self.next_byte = 0;
-            self.last_byte = buf.len() as u8;
-        }
-        let b = self.bytes[self.next_byte as usize];
-        self.next_byte += 1;
-        Some(b)
-    }
-}
-
 /// Helper routine: put a symbol into the symbol table,
 /// or find it.
 pub fn put(store: &Storage, symbol: impl SymbolInput) -> Ptr {
     // Stringify first, so we're comparing normalized byte vectors.
     let char_iter = symbol.get_iter();
-    let byte_iter = new_symbol_writer(char_iter);
+    let byte_iter = to_upper_bytes(char_iter);
     let string = vectors::make_byte_vector(store, byte_iter);
 
     for (i, ptr) in store.symbols().enumerate() {
@@ -95,35 +56,6 @@ pub fn put(store: &Storage, symbol: impl SymbolInput) -> Ptr {
     store.bind(StoredPtr::new(new_idx as usize, Tag::Symbol))
 }
 
-struct SymbolReader<ByteIter> {
-    it: ByteIter,
-    bytes: [u8; 4],
-    next_byte: u8,
-}
-
-impl<ByteIter> Iterator for SymbolReader<ByteIter>
-where
-    ByteIter: Iterator<Item = u8>,
-{
-    type Item = char;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let s = loop {
-            if let Ok(s) = core::str::from_utf8(&self.bytes[0..self.next_byte as usize]) {
-                if !s.is_empty() {
-                    break s;
-                }
-            }
-            // Otherwise, read more data.
-            self.bytes[self.next_byte as usize] = self.it.next()?;
-            self.next_byte += 1;
-        };
-        let c = s.chars().next()?;
-        self.next_byte = 0;
-        Some(c)
-    }
-}
-
 /// Get a string from a symbol.
 pub fn get(symbol: Symbol) -> impl '_ + Iterator<Item = char> {
     let v = symbol.store().symbols();
@@ -133,13 +65,7 @@ pub fn get(symbol: Symbol) -> impl '_ + Iterator<Item = char> {
     let bv: ByteVector = string
         .try_into()
         .expect("all entries in the symbol table must be strings (ByteVectors)");
-    let it = bv.iter();
-
-    SymbolReader {
-        it,
-        bytes: Default::default(),
-        next_byte: 0,
-    }
+    to_chars(bv.iter())
 }
 
 #[cfg(test)]

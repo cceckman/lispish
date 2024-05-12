@@ -3,33 +3,7 @@
 
 use std::fmt::Debug;
 
-use crate::{Bytes, Pair, Ptr, Storage, Tag, Vector};
-
-pub struct Error<'a> {
-    message: &'static str,
-    ptr: Ptr<'a>,
-}
-
-impl<'a> Error<'a> {
-    const fn new(format: &'static str, ptr: Ptr<'a>) -> Self {
-        Error {
-            message: format,
-            ptr,
-        }
-    }
-}
-
-impl Debug for Error<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "for object {}: {}", self.ptr, self.message)
-    }
-}
-
-impl std::fmt::Display for Error<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "for object {}: {}", self.ptr, self.message)
-    }
-}
+use crate::{Bytes, Error, Pair, Ptr, Storage, Tag, Vector};
 
 /// A ByteVector is a set of contiguously-stored bytes.
 #[derive(Debug, Clone, Copy)]
