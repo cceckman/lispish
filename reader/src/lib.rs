@@ -1,5 +1,7 @@
 use lispish_store::{Error, Ptr, Storage};
 
+mod tokens;
+
 pub struct Parser<'a> {
     store: &'a mut Storage,
 }
@@ -11,6 +13,7 @@ impl<'a> Parser<'a> {
 
     pub fn parse(&mut self, input: impl Iterator<Item = char>) -> Result<(), Error> {
         let st = self.store.put_string(input);
+        self.store.push(st);
         todo!()
     }
 }
