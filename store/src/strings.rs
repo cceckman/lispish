@@ -1,5 +1,39 @@
 //! Support routines for dealing with strings.
 
+use crate::{vectors::ByteVectorReader, ByteVector, Error, Ptr, Vector};
+
+#[derive(Clone, Copy, Debug)]
+pub struct LispString<'a> {
+    pub length: i64,
+    pub bytes: Vector<'a>,
+}
+
+impl<'a> TryFrom<Ptr<'a>> for LispString<'a> {
+    type Error = Error<'a>;
+    fn try_from(ptr: Ptr<'a>) -> Result<Self, Self::Error> {
+        let bv: ByteVector = ptr.try_into()?;
+        // TODO: Can we efficiently validate UTF-8?
+        // Would be good to do here.
+        Ok(Self {
+            length: bv.byte_length,
+            bytes: bv.vector,
+        })
+    }
+}
+
+impl<'a> IntoIterator for LispString<'a> {
+    type Item = char;
+    type IntoIter = StringReader<ByteVectorReader<'a>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        let bv = ByteVector {
+            byte_length: self.length,
+            vector: self.bytes,
+        };
+        to_chars(bv.into_iter())
+    }
+}
+
 #[derive(Clone)]
 struct CharToBytes<CharIter> {
     chars: CharIter,
@@ -55,7 +89,7 @@ where
 }
 
 /// Convert an iterator-over-bytes to an iterator-over-characters
-pub fn to_chars(b: impl Iterator<Item = u8>) -> impl Iterator<Item = char> {
+pub fn to_chars<I>(b: I) -> StringReader<I> {
     StringReader {
         it: b,
         bytes: Default::default(),
@@ -63,7 +97,7 @@ pub fn to_chars(b: impl Iterator<Item = u8>) -> impl Iterator<Item = char> {
     }
 }
 
-struct StringReader<ByteIter> {
+pub struct StringReader<ByteIter> {
     it: ByteIter,
     bytes: [u8; 4],
     next_byte: u8,

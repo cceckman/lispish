@@ -55,16 +55,16 @@
 
 mod bitset;
 
-use std::borrow::BorrowMut;
 use std::cell::{RefCell, RefMut};
 use std::ops::DerefMut;
 use std::{cmp::max, collections::VecDeque};
 mod objects;
+pub mod strings;
+mod symbols;
+mod utility;
+mod vectors;
 pub use objects::*;
 use strings::to_bytes;
-mod strings;
-mod symbols;
-mod vectors;
 pub use vectors::ByteVector;
 
 use self::bitset::BitSet;
@@ -84,7 +84,7 @@ pub struct Error<'a> {
 }
 
 impl<'a> Error<'a> {
-    const fn new(format: &'static str, ptr: Ptr<'a>) -> Self {
+    pub const fn new(format: &'static str, ptr: Ptr<'a>) -> Self {
         Error {
             message: format,
             ptr,

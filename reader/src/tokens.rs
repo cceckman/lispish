@@ -1,5 +1,7 @@
 //! Routines for tokenization.
 
+use lispish_store::{ByteVector, Ptr};
+
 struct Tokenizer<CharIter> {
     characters: CharIter,
     buffer: [char; 8],
@@ -26,4 +28,8 @@ enum TokenType {
     String,
 }
 
-struct Token {}
+struct Token<'a> {
+    tt: TokenType,
+    content: Option<ByteVector<'a>>,
+    location: Ptr<'a>,
+}
