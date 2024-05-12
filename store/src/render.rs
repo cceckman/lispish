@@ -168,8 +168,8 @@ fn render_gv(store: &Storage, object_meta: &ObjectFormats) -> (StorageStats, Vec
         let mut writer = DotWriter::from(&mut outbuf);
         let mut graph = writer.digraph();
         graph.node_attributes().set_font("monospace");
-        let mut queue = VecDeque::new();
-        queue.push_back(store.root());
+        let mut queue: VecDeque<Ptr> = VecDeque::new();
+        queue.push_back(store.bind(*store.root.borrow()));
 
         while let Some(it) = queue.pop_front() {
             // Special-case symbols, since they have their own

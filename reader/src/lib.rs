@@ -10,7 +10,7 @@ impl<'a> Parser<'a> {
     }
 
     pub fn parse(&mut self, input: impl Iterator<Item = char>) -> Result<(), Error> {
-        // Create the byte-vector of the input.
+        let st = self.store.put_string(input);
         todo!()
     }
 }

@@ -6,9 +6,14 @@
 //! The Lisp store is backed by an arena allocator of up to ~4000MiB.
 //! (Yes, not 4GiB- the difference allows for certain overheads.)
 //!
-//! The store provides pointer-tagged storage:
-//! - `put` methods store objects, and return pointers tagged with the relevant type.
-//! - `get` methods retrieve objects based on the pointer.
+//! The store provides:
+//! - pointer-tagged storage:
+//!     - `put` methods store objects, and return pointers (Ptr).
+//!        Pointers carry the type of the object.
+//!        `Ptr::get()` retrieves the stored object.
+//! - A symbol table: a persistent, uniquified list of uppercase strings.
+//! - A stack.
+//! - Garbage collection, only when no pointers are outstanding.
 //!
 //! The supported objects are:
 //! -   Nil: The nil pointer.
@@ -24,8 +29,6 @@
 //! layer uses.
 //! -   A ByteVector consists of a (length, vector-of-bytes) tuple.
 //! -   The symbol table is a vector of Strings.
-//!     The storage layer preserves and maintains its root independent of
-//!     the stack pointer(s).
 //! -   TODO: A String is a ByteVector that contains only UTF-8 codepoints.
 //!
 //! ## Old notes
@@ -52,6 +55,7 @@
 
 mod bitset;
 
+use std::borrow::BorrowMut;
 use std::cell::{RefCell, RefMut};
 use std::ops::DerefMut;
 use std::{cmp::max, collections::VecDeque};
@@ -318,14 +322,26 @@ impl Storage {
         }
     }
 
-    /// Get the current GC root.
-    /// Only one root may exist; the caller creates / destroys its own structure for this.
-    pub fn root(&self) -> Ptr {
-        self.bind(*self.root.borrow())
+    /// Peek at the top of the stack.
+    pub fn push(&self, ptr: Ptr) {
+        let p: Ptr = self.bind(*self.root.borrow());
+        let pair = self.put(Pair::cons(ptr, p));
+        *self.root.borrow_mut() = pair.raw;
     }
 
-    pub fn set_root<'a>(&'a self, root: Ptr<'a>) {
-        *self.root.borrow_mut() = root.raw;
+    /// Peek at the top of the stack.
+    pub fn pop(&self) -> Ptr {
+        let p: Ptr = self.bind(*self.root.borrow());
+        let pair = p.get().as_pair().unwrap();
+        *self.root.borrow_mut() = pair.cdr.raw;
+        pair.car
+    }
+
+    /// Peek at the top of the stack.
+    pub fn peek(&self) -> Ptr {
+        let p: Ptr = self.bind(*self.root.borrow());
+        let pair = p.get().as_pair().unwrap();
+        pair.car
     }
 
     /// Get the symbol table.
@@ -778,18 +794,15 @@ mod tests {
         let one = store.put(Object::Integer(1));
         let _ = store.put(Object::Float(3.0));
         let two = store.put(Object::Float(2.0));
-        let pre_stats = store.current_stats();
 
-        {
-            let root = store.put(Pair::cons(one, two));
-            store.set_root(root);
-        }
+        store.push(store.put(Pair::cons(one, two)));
+        let pre_stats = store.current_stats();
         store.gc();
 
-        assert_eq!(store.current_stats(), pre_stats);
+        assert_eq!(store.current_stats().objects, pre_stats.objects - 1);
 
         let Pair { car, cdr } = store
-            .root()
+            .peek()
             .get()
             .try_into()
             .expect("root should be a pair");
@@ -838,23 +851,23 @@ mod tests {
             Pair::cons(lsa, lsb)
         };
 
-        store.set_root(store.put(stack));
+        store.push(store.put(stack));
         let pre_stats = store.current_stats();
         store.gc();
         assert_eq!(store.current_stats(), pre_stats);
 
         let Pair { cdr: lsb, .. } = store
-            .get(store.root())
+            .get(store.pop())
             .try_into()
             .expect("root should be a pair");
-        store.set_root(lsb);
+        store.push(lsb);
         // Objects are:
         // b
         // (b ())
         // (b (b ()))
         // with no additional root (we kept one of the branches as the root.)
         store.gc();
-        let stack_top = store.root();
+        let stack_top = store.peek();
         // ('b b ()): objects are b, (b ()), and (b (b ()))
         assert_eq!(pre_stats.objects - store.current_stats().objects, 4);
 
@@ -898,7 +911,7 @@ mod tests {
         let x = store.put(Pair::cons(define, Ptr::nil()));
         let y = store.put(Pair::cons(lambda, x));
         let root = store.put(Pair::cons(a, y));
-        store.set_root(root);
+        store.push(root);
 
         store.gc();
         // Lost b:
@@ -916,9 +929,9 @@ mod tests {
         assert_eq!(b, ptr.get().as_bytes().unwrap());
 
         let pair = store.put(Pair::cons(ptr, Ptr::nil()));
-        store.set_root(pair);
+        store.push(pair);
         store.gc();
-        let pair = store.root().get().as_pair().unwrap();
+        let pair = store.peek().get().as_pair().unwrap();
         let bytes = pair.car.get().as_bytes().unwrap();
         assert_eq!(bytes, b);
     }
@@ -932,7 +945,7 @@ mod tests {
         let vptr = store.put_vector([b1, b2].into_iter());
 
         let pair = store.put(Pair::cons(vptr, Ptr::nil()));
-        store.set_root(pair);
+        store.push(pair);
 
         // Lookup before GC:
         {
@@ -945,7 +958,7 @@ mod tests {
 
         // Lookup after GC; should be preserved:
         {
-            let Pair { car: vptr, .. } = store.root().get().as_pair().unwrap();
+            let Pair { car: vptr, .. } = store.peek().get().as_pair().unwrap();
             let v = store.get(vptr).as_vector().unwrap();
             assert_eq!(v.length, 2);
             let bx = store.get_element_ptr(vptr, 1).unwrap();
@@ -963,7 +976,7 @@ mod tests {
         let vptr = store
             .put_vector([Pair::cons(one, Ptr::nil()), Pair::cons(Ptr::nil(), two)].into_iter());
 
-        store.set_root(vptr);
+        store.push(vptr);
 
         // Lookup before GC:
         {
@@ -977,7 +990,7 @@ mod tests {
 
         // Lookup after GC, one and two should be preserved:
         {
-            let v = (store.root().get()).as_vector().unwrap();
+            let v = (store.peek().get()).as_vector().unwrap();
             assert_eq!(v.length, 2);
             let onecell = (v.offset(0).unwrap().get()).as_pair().unwrap();
             let twocell = (v.offset(1).unwrap().get()).as_pair().unwrap();
@@ -991,11 +1004,11 @@ mod tests {
 
             // And we'll check: we can hold on to an individual element, even after the vector is
             // discarded.
-            store.set_root(v.offset(1).unwrap());
+            store.push(v.offset(1).unwrap());
         }
         store.gc();
 
-        let twocell = (store.root().get()).as_pair().unwrap();
+        let twocell = (store.peek().get()).as_pair().unwrap();
         let got_two = (twocell.cdr.get()).as_integer().unwrap();
         assert_eq!(got_two, 2);
     }
