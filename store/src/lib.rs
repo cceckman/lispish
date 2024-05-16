@@ -53,29 +53,30 @@
 //!     Strings use a ~typical allocator, with sizes rounded up to the nearest 8B.
 //!
 
+mod arena;
 mod bitset;
+mod objects;
+#[cfg(feature = "render")]
+mod render;
+mod symbols;
+mod tag;
+mod utility;
+mod vectors;
+
+pub mod strings;
+pub use objects::*;
+pub use tag::*;
+pub use vectors::ByteVector;
 
 use std::cell::{RefCell, RefMut};
 use std::ops::DerefMut;
 use std::{cmp::max, collections::VecDeque};
-mod objects;
-pub mod strings;
-mod symbols;
-mod utility;
-mod vectors;
-pub use objects::*;
-use strings::to_bytes;
-pub use vectors::ByteVector;
 
+use self::arena::{Arena, Arenas};
 use self::bitset::BitSet;
 pub use self::render::ObjectFormat;
 use self::render::ObjectFormats;
-
-#[cfg(feature = "render")]
-mod render;
-
-mod tag;
-pub use tag::*;
+use strings::to_bytes;
 
 /// A zero-allocation error type.
 pub struct Error<'a> {
@@ -106,8 +107,6 @@ impl std::fmt::Display for Error<'_> {
 
 /// Storage allows representing all persistent objects.
 pub struct Storage {
-    generation: RefCell<Generation>,
-
     /// Root of the main object tree.
     root: RefCell<StoredPtr>,
 
@@ -121,16 +120,18 @@ pub struct Storage {
     /// Node metadata.
     /// These provide useful debugging info, like "this is the root of the stack".
     labels: RefCell<ObjectFormats>,
+
+    arenas: RefCell<Arenas>,
 }
 
 impl Default for Storage {
     fn default() -> Self {
         let s = Self {
-            generation: Default::default(),
             root: Default::default(),
             symbols: Default::default(),
             high_water: Default::default(),
             labels: Default::default(),
+            arenas: Default::default(),
         };
         let symbols = s.put_vector::<Pair>(std::iter::empty());
         *s.symbols.borrow_mut() = symbols.raw;
@@ -138,46 +139,11 @@ impl Default for Storage {
     }
 }
 
-/// Data that exists for a single "generation" (between GCs).
-struct Generation {
-    objects: Vec<StoredValue>,
-}
-
-impl Default for Generation {
-    fn default() -> Self {
-        Self {
-            // Always reserve the 0 index.
-            objects: vec![StoredValue { tombstone: 0 }],
-        }
-    }
-}
-
-impl Generation {
-    fn with_capacity(len: usize) -> Self {
-        let mut objects = Vec::with_capacity(len);
-        // Reserve 0:
-        objects.push(StoredValue { tombstone: 0 });
-        Self {
-            // Always reserve the 0 index.
-            objects,
-        }
-    }
-
-    /// Gets the "next" pointer for this object.
-    fn get_next(&self, old_ptr: StoredPtr) -> StoredPtr {
-        if old_ptr.is_nil() || old_ptr.is_symbol() {
-            old_ptr
-        } else {
-            let idx = unsafe { self.objects[old_ptr.idx()].tombstone };
-            StoredPtr::new(idx, old_ptr.tag())
-        }
-    }
-}
-
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 pub struct StorageStats {
     pub objects: usize,
     pub symbols: usize,
+    pub generation: usize,
 }
 
 impl StorageStats {
@@ -186,34 +152,8 @@ impl StorageStats {
             // Update stats before compaction:
             objects: max(self.objects, other.objects),
             symbols: max(self.symbols, other.symbols),
+            generation: max(self.generation, other.generation),
         }
-    }
-}
-
-impl Generation {
-    /// Stores the Lisp object in storage.
-    fn put_object(&mut self, object: Object) -> StoredPtr {
-        let (stored, tag) = object.into();
-        self.put(stored, tag)
-    }
-
-    /// Stores the Lisp object in storage.
-    fn put(&mut self, stored: StoredValue, tag: Tag) -> StoredPtr {
-        let slot = self.objects.len();
-        self.objects.push(stored);
-        StoredPtr::new(slot, tag)
-    }
-
-    fn get(&self, ptr: StoredPtr) -> StoredValue {
-        let idx = ptr.idx();
-        assert!(idx < self.objects.len());
-        self.objects[idx]
-    }
-
-    fn update(&mut self, ptr: StoredPtr, pair: StoredPair) {
-        let idx = ptr.idx();
-        assert!(idx < self.objects.len());
-        self.objects[idx].pair = pair;
     }
 }
 
@@ -243,11 +183,14 @@ impl Storage {
         let sym_ptr: Ptr = self.bind(*self.symbols.borrow());
         let symbols = sym_ptr.get().as_vector().map(|v| v.length).unwrap_or(0) as usize;
 
-        let gen = self.generation.borrow();
+        let arenas = self.arenas.borrow();
+        let objects = arenas.current().len();
+        let generation = arenas.generation();
+
         StorageStats {
-            // Discount one object, the reserved nil index.
-            objects: gen.objects.len() - 1,
+            objects,
             symbols,
+            generation,
         }
     }
     pub fn max_stats(&self) -> StorageStats {
@@ -262,33 +205,40 @@ impl Storage {
 
     /// Insert a uniform vector into the storage.
     #[allow(private_bounds)]
-    pub fn put_vector<T>(&self, v: impl Iterator<Item = T>) -> Ptr
+    pub fn put_vector<T>(&self, mut v: impl Iterator<Item = T>) -> Ptr
     where
         T: UniformVector,
     {
         // We have to acquire & release borrow_mut repeatedly here,
         // because "get the object" on the iterator may require borrowing
         // the generation to resolve the object.
-        let start_idx = self.generation.borrow().objects.len();
+        let mut count = 0;
+        let first_idx = v
+            .next()
+            .map(|x| {
+                count += 1;
+                self.arenas.borrow_mut().current_mut().put(x.store())
+            })
+            .unwrap_or(0);
         for object in v {
-            let storeable = object.store();
-            self.generation.borrow_mut().put(storeable, T::tag());
+            count += 1;
+            self.arenas.borrow_mut().current_mut().put(object.store());
         }
-        let mut gen = self.generation.borrow_mut();
-        let length = gen.objects.len() - start_idx;
-        let ptr = StoredPtr::new(start_idx, T::tag());
+        let mut arenas = self.arenas.borrow_mut();
+        let gen = arenas.current_mut();
         let vec = StoredVector {
-            length: length as u32,
-            start: ptr,
+            length: count as u32,
+            start: StoredPtr::new(first_idx, T::tag()),
         };
-        let p = gen.put(StoredValue { vector: vec }, Tag::Vector);
+        let p = StoredPtr::new(gen.put(StoredValue { vector: vec }), Tag::Vector);
         self.bind(p)
     }
 
     /// Get a pointer-to-an-element from a vector.
     /// Returns none if v is not a vector or if the index is out-of-range.
     pub fn get_element_ptr(&self, v: Ptr, idx: u32) -> Option<Ptr> {
-        let stored_vector = self.generation.borrow().get(v.raw).as_vector(v.raw)?;
+        let mut arena = self.arenas.borrow_mut();
+        let stored_vector = arena.current_mut().get(v.raw.idx()).as_vector(v.raw)?;
         let ptr = stored_vector.offset(idx)?;
         Some(self.bind(ptr))
     }
@@ -298,7 +248,8 @@ impl Storage {
     /// since it is sufficient to rebind variables.
     pub fn update(&self, ptr: Ptr, object: Pair) {
         assert!(ptr.is_pair());
-        self.generation.borrow_mut().update(ptr.raw, object.into());
+        let mut arena = self.arenas.borrow_mut();
+        arena.current_mut().update(ptr.raw, object.into());
     }
 
     /// Stores the Lisp object in storage.
@@ -307,7 +258,8 @@ impl Storage {
         if let Object::Nil = value {
             return Ptr::default();
         }
-        let raw = self.generation.borrow_mut().put_object(value);
+        let mut arena = self.arenas.borrow_mut();
+        let raw = arena.current_mut().put_object(value);
         self.bind(raw)
     }
 
@@ -317,7 +269,7 @@ impl Storage {
         } else if ptr.is_symbol() {
             Object::Symbol(Symbol::bind(self, ptr.idx()))
         } else {
-            let stored = self.generation.borrow().get(ptr.raw);
+            let stored = self.arenas.borrow_mut().current().get(ptr.raw.idx());
             Object::bind(self, (ptr.raw, stored))
         }
     }
@@ -373,7 +325,8 @@ impl Storage {
         self.high_water = current_stats.max(&self.high_water);
 
         // Soft-destructure:
-        let last_gen = self.generation.take();
+        let mut arenas = self.arenas.borrow_mut();
+        let (last, next) = arenas.increment_generation();
         let mut root = self.root.borrow_mut();
         let mut symbols = self.symbols.borrow_mut();
         let mut labels = self.labels.borrow_mut();
@@ -381,7 +334,7 @@ impl Storage {
         // We intentionally put the symbol table first,
         // so that nice ~stable vector can land early.
         let mut roots = [symbols.deref_mut(), root.deref_mut()];
-        *self.generation.get_mut() = gc_internal(last_gen, &mut roots, &mut labels);
+        gc_internal(last, next, &mut roots, &mut labels);
 
         tracing::trace!("stats after GC: {:?}", self.current_stats());
     }
@@ -418,7 +371,7 @@ impl Storage {
     pub fn lookup(&self, object_id: impl AsRef<str>) -> Result<Ptr<'_>, String> {
         let stats = self.current_stats();
         let stored: StoredPtr = object_id.as_ref().parse()?;
-        let max_obj = self.generation.borrow().objects.len();
+        let max_obj = self.arenas.borrow().current().len();
         let max_sym = stats.symbols;
 
         let symbol_ok = stored.is_symbol() && stored.idx() < max_sym;
@@ -439,10 +392,11 @@ impl Storage {
 /// All pointers in the environment should be passed in via roots.
 /// Pointers can change across a GC pass; the GC routine will fix up those in storage and those in `roots`.
 fn gc_internal(
-    mut last_gen: Generation,
+    last_gen: &mut Arena,
+    next_gen: &mut Arena,
     roots: &mut [&mut StoredPtr],
     labels: &mut ObjectFormats,
-) -> Generation {
+) {
     let mut live_objects = BitSet::new();
     let mut queue: VecDeque<StoredPtr> = roots
         .iter()
@@ -463,7 +417,7 @@ fn gc_internal(
         }
         live_objects.set(old_idx);
 
-        let got = last_gen.get(old_ptr);
+        let got = last_gen.get(old_ptr.idx());
         if let Some(p) = got.as_pair(old_ptr) {
             for rp in [p.car, p.cdr] {
                 // Skip over nil (always 0) and symbols (different indices,
@@ -482,11 +436,10 @@ fn gc_internal(
 
     // We've marked all the objects.
     // Copy them to the new generation, and leave a tombstone.
-    let mut next_gen = Generation::with_capacity(live_objects.count());
+    // TODO: Handle bit-sets
     for old_idx in live_objects.bits_set() {
-        let new_idx = next_gen.objects.len();
-        next_gen.objects.push(last_gen.objects[old_idx]);
-        last_gen.objects[old_idx].tombstone = new_idx;
+        let new_idx = next_gen.put(last_gen.get(old_idx));
+        last_gen.set_next(old_idx, new_idx);
     }
 
     // Now that we've moved everything, we can update labels, dropping any unused.
@@ -496,7 +449,10 @@ fn gc_internal(
             if !live_objects.get(old_ptr.idx()) {
                 None
             } else {
-                Some((last_gen.get_next(old_ptr), v))
+                Some((
+                    StoredPtr::new(last_gen.get_next(old_ptr.idx()), old_ptr.tag()),
+                    v,
+                ))
             }
         })
         .collect();
@@ -515,10 +471,13 @@ fn gc_internal(
         queue.push_back(**old_root);
         // All "live" objects in the old arena now contain a tombstone entry,
         // their index in the new arena.
-        **old_root = last_gen.get_next(**old_root);
+        let new_idx = last_gen.get_next(old_root.idx());
+        let new_ptr = StoredPtr::new(new_idx, old_root.tag());
+        **old_root = new_ptr;
     }
 
-    // Now we have a list of "old" pointers in the heap to go through.
+    // Now we have a list of "old" pointers in the heap to go through
+    // and fix to the new ones.
     while let Some(old_ptr) = queue.pop_front() {
         // Internal check: we shouldn't traverse to nil pointers.
         assert!(!old_ptr.is_nil());
@@ -531,34 +490,35 @@ fn gc_internal(
         // We haven't visited this on the second pass yet.
         live_objects.clear(old_ptr.idx());
 
-        let new_ptr = last_gen.get_next(old_ptr);
-        if let Some(mut pair) = next_gen.get(new_ptr).as_pair(new_ptr) {
+        let new_ptr = last_gen.get_next_ptr(old_ptr);
+        if let Some(mut pair) = next_gen.get(new_ptr.idx()).as_pair(new_ptr) {
             // This is a pair/function we need to update its inner pointers, in the new arena.
             // This object still contains the old pointers, because we haven't visited this node on this pass.
             // Put the old pointers in the queue, and update the new location.
             for rp in [&mut pair.car, &mut pair.cdr] {
-                let new_ptr = last_gen.get_next(*rp);
-                if !(new_ptr.is_nil() || new_ptr.is_symbol()) {
+                let new_rp = last_gen.get_next_ptr(*rp);
+                if !(new_rp.is_nil() || new_rp.is_symbol()) {
                     queue.push_back(*rp);
                 }
-                *rp = new_ptr;
+                *rp = new_rp;
             }
-            next_gen.objects[new_ptr.idx()].pair = pair;
+            next_gen.get_ref(new_ptr.idx()).pair = pair;
         }
-        if let Some(old_vector) = next_gen.get(new_ptr).as_vector(new_ptr) {
-            // First, remap the start:
-            let new_start = last_gen.get_next(old_vector.start);
-            next_gen.objects[new_ptr.idx()].vector = StoredVector {
+        if let Some(old_vector) = next_gen.get(new_ptr.idx()).as_vector(new_ptr) {
+            // Remap the start, if nonzero:
+            let new_start = old_vector
+                .clone()
+                .next()
+                .map(|p| last_gen.get_next_ptr(p))
+                .unwrap_or(old_vector.start);
+            next_gen.get_ref(new_ptr.idx()).vector = StoredVector {
                 length: old_vector.length,
                 start: new_start,
             };
-
-            // And - we need to visit all the _old_ locations.
+            // We need to visit all the _old_ locations.
             queue.extend(old_vector.filter(|p| !(p.is_symbol() || p.is_nil())))
         }
     }
-
-    next_gen
 }
 
 #[derive(Clone, Copy)]
@@ -854,7 +814,8 @@ mod tests {
         store.push(store.put(stack));
         let pre_stats = store.current_stats();
         store.gc();
-        assert_eq!(store.current_stats(), pre_stats);
+        assert_eq!(store.current_stats().objects, pre_stats.objects);
+        assert_eq!(store.current_stats().symbols, pre_stats.symbols);
 
         let Pair { cdr: lsb, .. } = store
             .get(store.pop())
@@ -944,8 +905,7 @@ mod tests {
         let b2: Bytes = [3, 0, 0, 0, 4, 0, 0, 0];
         let vptr = store.put_vector([b1, b2].into_iter());
 
-        let pair = store.put(Pair::cons(vptr, Ptr::nil()));
-        store.push(pair);
+        store.push(vptr);
 
         // Lookup before GC:
         {
@@ -958,7 +918,7 @@ mod tests {
 
         // Lookup after GC; should be preserved:
         {
-            let Pair { car: vptr, .. } = store.peek().get().as_pair().unwrap();
+            let vptr = store.peek();
             let v = store.get(vptr).as_vector().unwrap();
             assert_eq!(v.length, 2);
             let bx = store.get_element_ptr(vptr, 1).unwrap();
