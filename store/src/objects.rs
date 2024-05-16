@@ -1,6 +1,6 @@
-use crate::{symbols, StoredVector};
-
 use super::{Bind, Storage, StoredPair, StoredPtr, StoredValue, Tag};
+use crate::{symbols, StoredVector};
+use core::fmt::{Debug, Display, Write};
 
 /// Enum for a Lisp object.
 #[derive(Debug, Clone, Copy)]
@@ -28,7 +28,7 @@ impl PartialEq for Ptr<'_> {
     fn eq(&self, other: &Self) -> bool {
         let raw = self.raw == other.raw;
         raw && match (self.store, other.store) {
-            (Some(a), Some(b)) => std::ptr::eq(a, b),
+            (Some(a), Some(b)) => core::ptr::eq(a, b),
             (None, None) => true,
             _ => false,
         }
@@ -37,48 +37,9 @@ impl PartialEq for Ptr<'_> {
 
 impl Eq for Ptr<'_> {}
 
-impl std::fmt::Display for Ptr<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.raw.fmt(f)
-    }
-}
-
-impl std::fmt::Display for StoredPtr {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let tag = match self.tag() {
-            Tag::Nil => "nil",
-            Tag::Integer => "int",
-            Tag::Float => "flt",
-            Tag::Symbol => "sym",
-            Tag::Pair => "obj",
-            Tag::Bytes => "byt",
-            Tag::Vector => "vec",
-        };
-        write!(f, "{}#{}", tag, self.idx())
-    }
-}
-
-impl std::str::FromStr for StoredPtr {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if let Some((tag, number)) = s.split_once('#') {
-            let tag = match tag {
-                "nil" => Tag::Nil,
-                "int" => Tag::Integer,
-                "flt" => Tag::Float,
-                "sym" => Tag::Symbol,
-                "obj" => Tag::Pair,
-                "vec" => Tag::Vector,
-                "byt" => Tag::Bytes,
-                _ => return Err(format!("invalid tag {}", tag)),
-            };
-            let idx: usize = number
-                .parse()
-                .map_err(|e| format!("invalid index: {}", e))?;
-            Ok(StoredPtr::new(idx, tag))
-        } else {
-            Err(format!("invalid pointer {}", s))
-        }
+impl Display for Ptr<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        Display::fmt(&self.raw, f)
     }
 }
 
@@ -90,6 +51,37 @@ impl<'a> Ptr<'a> {
         } else {
             assert!(self.is_nil());
             Object::Nil
+        }
+    }
+}
+
+impl core::fmt::Display for Object<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Object::Nil => write!(f, "nil"),
+            Object::Integer(i) => write!(f, "{}", i),
+            Object::Float(i) => write!(f, "{}", i),
+            Object::Symbol(j) => {
+                for c in j.get() {
+                    f.write_char(c)?
+                }
+                Ok(())
+            }
+            Object::Pair(Pair { car, cdr }) => write!(f, "({car}, {cdr})"),
+            Object::Bytes(b) => write!(f, "0x{b:02x?}"),
+            Object::Vector(b) => {
+                f.write_char('[')?;
+                // As with Pair, we don't display the objects themselves, just the
+                // pointers. A vector may contain itself!
+                let l = (b.length - 1) as usize;
+                for (i, ptr) in b.enumerate() {
+                    write!(f, "{ptr}")?;
+                    if i != l {
+                        write!(f, ", ")?;
+                    }
+                }
+                f.write_char(']')
+            }
         }
     }
 }
@@ -301,8 +293,8 @@ pub type Integer = i64;
 pub type Float = f64;
 pub type Bytes = [u8; 8];
 
-impl std::fmt::Debug for Ptr<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for Ptr<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Id")
             .field("idx", &self.idx())
             .field("tag", &self.tag())
@@ -322,7 +314,7 @@ impl<'a> Pair<'a> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 pub struct Vector<'a> {
     pub length: u32,
     pub start: Ptr<'a>,
@@ -392,8 +384,8 @@ impl<'a> Symbol<'a> {
     }
 }
 
-impl std::fmt::Debug for Symbol<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for Symbol<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{:?}", self.idx)
     }
 }
@@ -401,7 +393,7 @@ impl std::fmt::Debug for Symbol<'_> {
 impl PartialEq for Symbol<'_> {
     fn eq(&self, other: &Self) -> bool {
         let idx_eq = self.idx == other.idx;
-        idx_eq && std::ptr::eq(self.store, other.store)
+        idx_eq && core::ptr::eq(self.store, other.store)
     }
 }
 
@@ -434,5 +426,69 @@ impl<'a> Bind<'a> for Pair<'a> {
             car: Ptr::bind(store, raw.car),
             cdr: Ptr::bind(store, raw.cdr),
         }
+    }
+}
+
+#[cfg(all(test, feature = "std"))]
+mod tests {
+    use crate::{Pair, Ptr, Storage};
+
+    #[test]
+    fn display_int() {
+        let store = Storage::default();
+        let v = store.put(10);
+        assert_eq!(v.get().to_string(), "10");
+    }
+
+    #[test]
+    fn display_float() {
+        let store = Storage::default();
+        let v = store.put(10.2);
+        assert_eq!(v.get().to_string(), "10.2");
+    }
+
+    #[test]
+    fn display_symbol() {
+        let store = Storage::default();
+        let v = store.put_symbol("hello");
+        // Symbols are canonicalized to uppercase:
+        assert_eq!(v.get().to_string(), "HELLO");
+    }
+
+    #[test]
+    fn display_pair() {
+        let store = Storage::default();
+        let one = store.put(1);
+        let two = store.put(2);
+        let v = store.put(Pair::cons(one, two));
+        // Symbols are canonicalized to uppercase:
+        assert_eq!(v.get().to_string(), format!("({}, {})", one, two));
+    }
+
+    #[test]
+    fn display_bytes() {
+        let store = Storage::default();
+        let v = store.put([1, 2, 3, 4, 0xa, 0xb, 0xc, 0xd]);
+        // Symbols are canonicalized to uppercase:
+        assert_eq!(v.get().to_string(), "0x[01, 02, 03, 04, 0a, 0b, 0c, 0d]",);
+    }
+
+    #[test]
+    fn display_vector() {
+        let store = Storage::default();
+        let vp = store.put_vector([1i64, 2].into_iter());
+        let vo = vp.get();
+        let v = vo.as_vector().unwrap();
+        let p0 = v.offset(0).unwrap();
+        let p1 = v.offset(1).unwrap();
+        // Symbols are canonicalized to uppercase:
+        assert_eq!(vo.to_string(), format!("[{}, {}]", p0, p1));
+    }
+
+    #[test]
+    fn display_nil() {
+        let vo = Ptr::nil().get();
+        // Symbols are canonicalized to uppercase:
+        assert_eq!(vo.to_string(), "nil");
     }
 }

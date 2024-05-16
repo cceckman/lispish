@@ -97,42 +97,69 @@ impl Arena {
     }
 }
 
-pub struct Arenas {
+/// The generic Arenas object,
+/// which works over either allocated or static Arena objects.
+pub struct GenericArenas<T> {
     // The arenas are distinct to please the borrow-checker,
     // which understands split borrows of _fields_ but not _slices_.
-    arena_0: Box<Arena>,
-    arena_1: Box<Arena>,
+    arena_0: T,
+    arena_1: T,
     generation: usize,
 }
 
-impl Default for Arenas {
+#[cfg(feature = "std")]
+pub type Arenas = GenericArenas<Box<Arena>>;
+
+/// Trait for getting a new Arena to start off with.
+pub trait ArenaInit {
+    fn new(idx: usize) -> Self;
+}
+
+impl ArenaInit for Box<Arena> {
+    fn new(_idx: usize) -> Self {
+        Box::new(Arena::new())
+    }
+}
+
+impl<T> Default for GenericArenas<T>
+where
+    T: ArenaInit,
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Arenas {
-    fn new() -> Arenas {
-        Arenas {
+impl<T> GenericArenas<T>
+where
+    T: ArenaInit,
+{
+    fn new() -> Self {
+        Self {
             generation: 0,
-            arena_0: Box::new(Arena::new()),
-            arena_1: Box::new(Arena::new()),
+            arena_0: T::new(0),
+            arena_1: T::new(1),
         }
     }
+}
 
+impl<T> GenericArenas<T>
+where
+    T: AsRef<Arena> + AsMut<Arena>,
+{
     pub fn current_mut(&mut self) -> &mut Arena {
         if self.generation % 2 == 0 {
-            &mut self.arena_0
+            self.arena_0.as_mut()
         } else {
-            &mut self.arena_1
+            self.arena_1.as_mut()
         }
     }
 
     pub fn current(&self) -> &Arena {
         if self.generation % 2 == 0 {
-            &self.arena_0
+            self.arena_0.as_ref()
         } else {
-            &self.arena_1
+            self.arena_1.as_ref()
         }
     }
 
@@ -144,11 +171,11 @@ impl Arenas {
     pub fn increment_generation(&mut self) -> (&mut Arena, &mut Arena) {
         self.generation += 1;
         if self.generation % 2 == 0 {
-            self.arena_0.count = 1;
-            (&mut self.arena_1, &mut self.arena_0)
+            self.arena_0.as_mut().count = 1;
+            (self.arena_1.as_mut(), self.arena_0.as_mut())
         } else {
-            self.arena_1.count = 1;
-            (&mut self.arena_0, &mut self.arena_1)
+            self.arena_1.as_mut().count = 1;
+            (self.arena_0.as_mut(), self.arena_1.as_mut())
         }
     }
 }

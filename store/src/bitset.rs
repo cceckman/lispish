@@ -14,7 +14,7 @@ impl BitSet {
         Default::default()
     }
 
-    const BITS_PER_WORD: usize = std::mem::size_of::<usize>() * 8;
+    const BITS_PER_WORD: usize = core::mem::size_of::<usize>() * 8;
 
     /// Gets the value of the given bit
     pub fn get(&self, idx: usize) -> bool {

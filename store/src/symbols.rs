@@ -12,7 +12,7 @@
 //! (falling back to linear beyond that.)
 //!
 
-use std::cmp::Ordering;
+use core::cmp::Ordering;
 
 use crate::{
     strings::{to_chars, to_upper_bytes},
@@ -56,7 +56,7 @@ pub fn put(store: &Storage, symbol: impl SymbolInput) -> Ptr {
     let new_idx = table.length;
     let new_items = table
         .map(|v| v.get().as_pair().unwrap())
-        .chain(std::iter::once(string.get().as_pair().unwrap()));
+        .chain(core::iter::once(string.get().as_pair().unwrap()));
     let new_table = store.put_vector(new_items);
     store.set_symbols(new_table);
     store.bind(StoredPtr::new(new_idx as usize, Tag::Symbol))

@@ -1,3 +1,4 @@
+#![cfg_attr(not(feature = "std"), no_std)]
 //! Lisp data types and allocators.
 //!
 //!
@@ -64,19 +65,24 @@ mod utility;
 mod vectors;
 
 pub mod strings;
-pub use objects::*;
-pub use tag::*;
-pub use vectors::ByteVector;
-
-use std::cell::{RefCell, RefMut};
-use std::ops::DerefMut;
-use std::{cmp::max, collections::VecDeque};
+pub use self::objects::*;
+#[cfg(feature = "render")]
+pub use self::render::ObjectFormat;
+pub use self::tag::*;
+pub use self::vectors::ByteVector;
 
 use self::arena::{Arena, Arenas};
 use self::bitset::BitSet;
-pub use self::render::ObjectFormat;
+#[cfg(feature = "render")]
 use self::render::ObjectFormats;
-use strings::to_bytes;
+use self::strings::to_bytes;
+
+use core::cell::{RefCell, RefMut};
+use core::cmp::max;
+use core::ops::DerefMut;
+
+#[cfg(feature = "std")]
+use std::collections::VecDeque;
 
 /// A zero-allocation error type.
 pub struct Error<'a> {
@@ -93,14 +99,14 @@ impl<'a> Error<'a> {
     }
 }
 
-impl std::fmt::Debug for Error<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for Error<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "for object {}: {}", self.ptr, self.message)
     }
 }
 
-impl std::fmt::Display for Error<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for Error<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "for object {}: {}", self.ptr, self.message)
     }
 }
@@ -119,6 +125,7 @@ pub struct Storage {
 
     /// Node metadata.
     /// These provide useful debugging info, like "this is the root of the stack".
+    #[cfg(feature = "render")]
     labels: RefCell<ObjectFormats>,
 
     arenas: RefCell<Arenas>,
@@ -130,10 +137,11 @@ impl Default for Storage {
             root: Default::default(),
             symbols: Default::default(),
             high_water: Default::default(),
+            #[cfg(feature = "render")]
             labels: Default::default(),
             arenas: Default::default(),
         };
-        let symbols = s.put_vector::<Pair>(std::iter::empty());
+        let symbols = s.put_vector::<Pair>(core::iter::empty());
         *s.symbols.borrow_mut() = symbols.raw;
         s
     }
@@ -334,30 +342,16 @@ impl Storage {
         // We intentionally put the symbol table first,
         // so that nice ~stable vector can land early.
         let mut roots = [symbols.deref_mut(), root.deref_mut()];
-        gc_internal(last, next, &mut roots, &mut labels);
+
+        gc_internal(
+            last,
+            next,
+            &mut roots,
+            #[cfg(feature = "render")]
+            &mut labels,
+        );
 
         tracing::trace!("stats after GC: {:?}", self.current_stats());
-    }
-
-    /// Get a displayable representation of the item.
-    pub fn display(&self, it: Object) -> String {
-        match it {
-            Object::Nil => "nil".to_owned(),
-            Object::Integer(i) => format!("{}", i),
-            Object::Float(i) => format!("{}", i),
-            Object::Symbol(j) => j.get().collect(),
-            Object::Pair(Pair { car, cdr }) => format!("({car}, {cdr})"),
-            Object::Bytes(b) => format!("0x{b:02x?}"),
-            Object::Vector(b) => {
-                let mut out = "[".to_string();
-                // As with Pair, we don't display the objects themselves, just the
-                // pointers. A vector may contain itself!
-                let ptrs: Vec<_> = b.into_iter().map(|p| format!("{p}")).collect();
-                out += &ptrs.join(", ");
-                out += "]";
-                out
-            }
-        }
     }
 
     /// Look up an object in storage by a stringified pointer.
@@ -368,6 +362,7 @@ impl Storage {
     ///
     /// Note, though, this does not and cannot check the type of the pointer;
     /// we're trusting that the tag in the string matches the actual object.
+    #[cfg(feature = "std")]
     pub fn lookup(&self, object_id: impl AsRef<str>) -> Result<Ptr<'_>, String> {
         let stats = self.current_stats();
         let stored: StoredPtr = object_id.as_ref().parse()?;
@@ -395,7 +390,7 @@ fn gc_internal(
     last_gen: &mut Arena,
     next_gen: &mut Arena,
     roots: &mut [&mut StoredPtr],
-    labels: &mut ObjectFormats,
+    #[cfg(feature = "render")] labels: &mut ObjectFormats,
 ) {
     let mut live_objects = BitSet::new();
     let mut queue: VecDeque<StoredPtr> = roots
@@ -608,6 +603,47 @@ impl Default for StoredPtr {
     }
 }
 
+#[cfg(feature = "std")]
+impl core::str::FromStr for StoredPtr {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if let Some((tag, number)) = s.split_once('#') {
+            let tag = match tag {
+                "nil" => Tag::Nil,
+                "int" => Tag::Integer,
+                "flt" => Tag::Float,
+                "sym" => Tag::Symbol,
+                "obj" => Tag::Pair,
+                "vec" => Tag::Vector,
+                "byt" => Tag::Bytes,
+                _ => return Err(format!("invalid tag {}", tag)),
+            };
+            let idx: usize = number
+                .parse()
+                .map_err(|e| format!("invalid index: {}", e))?;
+            Ok(StoredPtr::new(idx, tag))
+        } else {
+            Err(format!("invalid pointer {}", s))
+        }
+    }
+}
+
+impl core::fmt::Display for StoredPtr {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let tag = match self.tag() {
+            Tag::Nil => "nil",
+            Tag::Integer => "int",
+            Tag::Float => "flt",
+            Tag::Symbol => "sym",
+            Tag::Pair => "obj",
+            Tag::Bytes => "byt",
+            Tag::Vector => "vec",
+        };
+        write!(f, "{}#{}", tag, self.idx())
+    }
+}
+
 /// The types that can be stored in a (uniform) vector.
 ///
 /// These are only:
@@ -715,8 +751,8 @@ impl StoredPtr {
     }
 }
 
-impl std::fmt::Debug for StoredPtr {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for StoredPtr {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("StoredPtr")
             .field("idx", &self.idx())
             .field("tag", &self.tag())
@@ -739,7 +775,7 @@ impl From<Pair<'_>> for StoredPair {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "std"))]
 mod tests {
     use core::panic;
 
@@ -971,66 +1007,6 @@ mod tests {
         let twocell = (store.peek().get()).as_pair().unwrap();
         let got_two = (twocell.cdr.get()).as_integer().unwrap();
         assert_eq!(got_two, 2);
-    }
-
-    #[test]
-    fn display_int() {
-        let store = Storage::default();
-        let v = store.put(10);
-        assert_eq!(store.display(v.get()), "10");
-    }
-
-    #[test]
-    fn display_float() {
-        let store = Storage::default();
-        let v = store.put(10.2);
-        assert_eq!(store.display(v.get()), "10.2");
-    }
-
-    #[test]
-    fn display_symbol() {
-        let store = Storage::default();
-        let v = store.put_symbol("hello");
-        // Symbols are canonicalized to uppercase:
-        assert_eq!(store.display(v.get()), "HELLO");
-    }
-
-    #[test]
-    fn display_pair() {
-        let store = Storage::default();
-        let one = store.put(1);
-        let two = store.put(2);
-        let v = store.put(Pair::cons(one, two));
-        // Symbols are canonicalized to uppercase:
-        assert_eq!(store.display(v.get()), format!("({}, {})", one, two));
-    }
-
-    #[test]
-    fn display_bytes() {
-        let store = Storage::default();
-        let v = store.put([1, 2, 3, 4, 0xa, 0xb, 0xc, 0xd]);
-        // Symbols are canonicalized to uppercase:
-        assert_eq!(store.display(v.get()), "0x[01, 02, 03, 04, 0a, 0b, 0c, 0d]",);
-    }
-
-    #[test]
-    fn display_vector() {
-        let store = Storage::default();
-        let vp = store.put_vector([1i64, 2].into_iter());
-        let vo = vp.get();
-        let v = vo.as_vector().unwrap();
-        let p0 = v.offset(0).unwrap();
-        let p1 = v.offset(1).unwrap();
-        // Symbols are canonicalized to uppercase:
-        assert_eq!(store.display(vo), format!("[{}, {}]", p0, p1));
-    }
-
-    #[test]
-    fn display_nil() {
-        let store = Storage::default();
-        let vo = Ptr::nil().get();
-        // Symbols are canonicalized to uppercase:
-        assert_eq!(store.display(vo), "nil");
     }
 
     #[test]

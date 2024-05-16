@@ -1,12 +1,12 @@
 //! Additional routinames for manipulating vectors.
 //!
 
-use std::{cmp::Ordering, fmt::Debug};
+use core::{cmp::Ordering, fmt::Debug};
 
 use crate::{Bytes, Error, Pair, Ptr, Storage, Tag, Vector};
 
 /// A ByteVector is a set of contiguously-stored bytes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 pub struct ByteVector<'a> {
     pub vector: Vector<'a>,
     pub byte_length: i64,

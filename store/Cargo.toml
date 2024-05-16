@@ -13,9 +13,9 @@ tempfile = { version = "3.10.1", optional = true }
 tracing = "0.1.40"
 
 [features]
-render = ["dep:maud", "dep:dot-writer", "dep:tempfile"]
-default = ["all"]
-all = ["render"]
+std = []
+render = ["dep:maud", "dep:dot-writer", "tempfile", "std"]
+default = ["render", "std"]
 tempfile = ["dep:tempfile"]
 
 
