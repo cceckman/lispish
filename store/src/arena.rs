@@ -3,6 +3,8 @@
 //! This implementation uses a 4GiB arena:
 //! 32-bit pointers, 8B-aligned, with 3b of tag.
 
+use core::mem::MaybeUninit;
+
 use crate::{Object, StoredPair, StoredPtr, StoredValue};
 
 const OBJECT_SIZE: usize = core::mem::size_of::<StoredValue>();
@@ -16,7 +18,8 @@ const EFFECTIVE_ARENA_SIZE: u64 = ARENA_SIZE - ARENA_OVERHEAD;
 const MAX_OBJECT_COUNT: usize = (EFFECTIVE_ARENA_SIZE / OBJECT_SIZE as u64) as usize;
 
 /// Pick a more modest size to begin with.
-const OBJECT_COUNT: usize = 4096;
+const OBJECT_COUNT: usize = MAX_OBJECT_COUNT;
+// const OBJECT_COUNT: usize = 4096;
 
 type ArenaStore = [StoredValue; OBJECT_COUNT];
 
@@ -26,18 +29,15 @@ pub struct Arena {
 }
 
 impl Arena {
-    const fn new() -> Self {
-        // Index 0 is always reserved for the nil pointer.
-        // ...which has a _valid_ tombstone, that also points to index 0
-        // in the next generation - semantically accurate too!
-        Self {
-            objects: [StoredValue { tombstone: 0 }; OBJECT_COUNT],
-            count: 1,
-        }
+    /// Perform startup initialization, to go from a "maybe uninit"
+    /// to an "inited" object.
+    fn init(this: &mut MaybeUninit<Self>) -> &mut Self {
+        let m = unsafe { this.assume_init_mut() };
+        m.objects[0].tombstone = 0;
+        m.count = 1;
+        m
     }
-}
 
-impl Arena {
     /// Stores the Lisp object in storage.
     pub fn put_object(&mut self, object: Object) -> StoredPtr {
         let (stored, tag) = object.into();
@@ -115,9 +115,17 @@ pub trait ArenaInit {
     fn new(idx: usize) -> Self;
 }
 
+#[cfg(feature = "std")]
 impl ArenaInit for Box<Arena> {
     fn new(_idx: usize) -> Self {
-        Box::new(Arena::new())
+        // Alas, requires unsafe: https://github.com/rust-lang/rust/issues/53827#issuecomment-572476302
+        use std::alloc::{alloc, Layout};
+        let layout = Layout::new::<MaybeUninit<Arena>>();
+        unsafe {
+            let ptr = &mut *(alloc(layout) as *mut MaybeUninit<Arena>);
+            let ptr = Arena::init(ptr);
+            Box::from_raw(ptr)
+        }
     }
 }
 

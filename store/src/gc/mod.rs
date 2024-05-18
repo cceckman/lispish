@@ -21,6 +21,15 @@ pub fn gc(
     roots: &mut [&mut StoredPtr],
     #[cfg(feature = "render")] labels: &mut ObjectFormats,
 ) {
+    // TODO: Sketch of "no alloc" version:
+    // - Whenever we allocate an Arena,
+    //   we reserve the first N chunks for the BitSet,
+    //   after 0.
+    //   0.2% overhead.
+    // - The next generation holds the queue; used, unvisited nodes are marked.
+    // - The current generation holds the done; visited nodes are marked.
+    // This means the next generation winds up with an empty bitset.
+
     let mut live_objects = BitSet::new();
     let mut queue: VecDeque<StoredPtr> = roots
         .iter()
