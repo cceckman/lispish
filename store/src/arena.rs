@@ -10,7 +10,7 @@ const PTR_SIZE: usize = core::mem::size_of::<StoredPtr>();
 
 // Subtract out overheads from the arena size:
 const ARENA_SIZE: u64 = 1u64 << (PTR_SIZE * 8);
-// Space for `count`
+// Space for `count`:
 const ARENA_OVERHEAD: u64 = core::mem::size_of::<u32>() as u64;
 const EFFECTIVE_ARENA_SIZE: u64 = ARENA_SIZE - ARENA_OVERHEAD;
 const MAX_OBJECT_COUNT: usize = (EFFECTIVE_ARENA_SIZE / OBJECT_SIZE as u64) as usize;
