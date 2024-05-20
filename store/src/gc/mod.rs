@@ -29,18 +29,21 @@ pub fn gc(
     // - The next generation holds the queue; used, unvisited nodes are marked.
     // - The current generation holds the done; visited nodes are marked.
     // This means the next generation winds up with an empty bitset.
-
-    let mut live_objects = BitSet::new();
-    let mut queue: VecDeque<StoredPtr> = roots
-        .iter()
-        .filter_map(|v| if !v.is_nil() { Some(**v) } else { None })
-        .collect();
+    //
+    // TODO: ...this isn't going to work.
+    // Our actual-queue-of-things lets us keep track of pointer types,
+    // but a bitset-as-queue doesn't.
+    // Are our types constrained enough that we can get away with it?
+    // - One "have visited and copied" entry, avoid repeats
+    // - One "also need to visit cdr" entry
+    // The problem with that is recursive vectors... can't have both breadth and depth.
 
     // First pass:
     // -    Move all objects to the new arena.
     // -    Total up how much space we'll need for strings.
-    // TODO: Consider a stack rather than a queue. Measure: do we run faster with one or the other?
-    // (Hypothesis: stack will result in better data locality.)
+    while !next_gen.bitset().is_empty() {
+        for idx in next_gen.bitset() {}
+    }
     while let Some(old_ptr) = queue.pop_front() {
         let old_idx = old_ptr.idx();
         if old_ptr.is_nil() || old_ptr.is_symbol() || live_objects.get(old_idx) {

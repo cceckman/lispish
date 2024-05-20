@@ -5,7 +5,7 @@
 
 use core::mem::MaybeUninit;
 
-use crate::{Object, StoredPair, StoredPtr, StoredValue};
+use crate::{bitset2::Bitset, Object, StoredPair, StoredPtr, StoredValue, Tag};
 
 const OBJECT_SIZE: usize = core::mem::size_of::<StoredValue>();
 const PTR_SIZE: usize = core::mem::size_of::<StoredPtr>();
@@ -21,6 +21,11 @@ const MAX_OBJECT_COUNT: usize = (EFFECTIVE_ARENA_SIZE / OBJECT_SIZE as u64) as u
 const OBJECT_COUNT: usize = MAX_OBJECT_COUNT;
 // const OBJECT_COUNT: usize = 4096;
 
+// We need OBJECT_COUNT bits to trace during GC.
+// We reserve them all the time, though.
+const BITS_PER_OBJECT: usize = OBJECT_SIZE * 8;
+const BITSET_OBJECTS: usize = (OBJECT_COUNT + BITS_PER_OBJECT - 1) / BITS_PER_OBJECT;
+
 type ArenaStore = [StoredValue; OBJECT_COUNT];
 
 pub struct Arena {
@@ -35,7 +40,19 @@ impl Arena {
         let m = unsafe { this.assume_init_mut() };
         m.objects[0].tombstone = 0;
         m.count = 1;
+
+        // Initialize (clear) the bitset for this Arena too.
+        for i in 1..=BITSET_OBJECTS {
+            m.objects[i].bytes = [0u8; 8];
+            m.count += 1;
+        }
+
         m
+    }
+
+    /// Get the bitset for this arena.
+    pub fn bitset(&mut self) -> Bitset {
+        Bitset::new(self)
     }
 
     /// Stores the Lisp object in storage.

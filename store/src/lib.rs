@@ -56,6 +56,7 @@
 
 mod arena;
 mod bitset;
+mod bitset2;
 mod gc;
 mod objects;
 #[cfg(feature = "render")]
