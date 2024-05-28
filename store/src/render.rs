@@ -8,7 +8,6 @@ use std::process::Stdio;
 
 use crate::{Object, Pair, Ptr, Storage};
 
-use super::bitset::BitSet;
 use super::StorageStats;
 use super::StoredPtr;
 
@@ -17,12 +16,13 @@ fn node_for_ptr(p: Ptr) -> String {
 }
 
 /// Object metadata, for rendering purposes.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ObjectFormat {
     pub label: String,
     pub bg_color: String,
 }
 
+#[cfg(feature = "std")]
 pub type ObjectFormats = HashMap<StoredPtr, ObjectFormat>;
 
 fn render_vector_element(i: usize, ptr: Ptr) -> PreEscaped<String> {
@@ -160,8 +160,8 @@ fn render_node<'a>(
 
 /// Render the state of storage into Graphviz graph.
 fn render_gv(store: &Storage, object_meta: &ObjectFormats) -> (StorageStats, Vec<u8>) {
-    let mut visited_objects = BitSet::new();
-    let mut visited_symbols = BitSet::new();
+    let mut visited_objects = std::collections::HashSet::new();
+    let mut visited_symbols = std::collections::HashSet::new();
     let mut stats = StorageStats::default();
     let mut outbuf = Vec::new();
     {
@@ -175,17 +175,17 @@ fn render_gv(store: &Storage, object_meta: &ObjectFormats) -> (StorageStats, Vec
             // Special-case symbols, since they have their own
             // index space.
             if it.is_symbol() {
-                if !visited_symbols.get(it.idx()) {
+                if !visited_symbols.contains(&it.idx()) {
                     stats.symbols += 1;
                 }
-                visited_symbols.set(it.idx());
+                visited_symbols.insert(it.idx());
                 continue;
             }
 
-            if visited_objects.get(it.idx()) {
+            if visited_objects.contains(&it.idx()) {
                 continue;
             }
-            visited_objects.set(it.idx());
+            visited_objects.insert(it.idx());
             if it.is_nil() {
                 // We render nil only as a target; we don't insert a node for it.
                 continue;

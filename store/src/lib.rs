@@ -56,8 +56,6 @@
 
 mod arena;
 mod bitset;
-mod bitset2;
-mod gc;
 mod objects;
 #[cfg(feature = "render")]
 mod render;
@@ -73,7 +71,7 @@ pub use self::render::ObjectFormat;
 pub use self::tag::*;
 pub use self::vectors::ByteVector;
 
-use self::arena::Arenas;
+use self::arena::{Arena, Generations, GenerationsAccess};
 #[cfg(feature = "render")]
 use self::render::ObjectFormats;
 use self::strings::to_bytes;
@@ -126,7 +124,7 @@ pub struct Storage {
     #[cfg(feature = "render")]
     labels: RefCell<ObjectFormats>,
 
-    arenas: RefCell<Arenas>,
+    arenas: RefCell<Arena>,
 }
 
 impl Default for Storage {
@@ -331,8 +329,6 @@ impl Storage {
         self.high_water = current_stats.max(&self.high_water);
 
         // Soft-destructure:
-        let mut arenas = self.arenas.borrow_mut();
-        let (last, next) = arenas.increment_generation();
         let mut root = self.root.borrow_mut();
         let mut symbols = self.symbols.borrow_mut();
         let mut labels = self.labels.borrow_mut();
@@ -340,10 +336,7 @@ impl Storage {
         // We intentionally put the symbol table first,
         // so that nice ~stable vector can land early.
         let mut roots = [symbols.deref_mut(), root.deref_mut()];
-
-        gc::gc(
-            last,
-            next,
+        let mut arenas = self.arenas.borrow_mut().gc(
             &mut roots,
             #[cfg(feature = "render")]
             &mut labels,
@@ -389,13 +382,14 @@ union StoredValue {
 
     /// Representation for a single pair.
     pair: StoredPair,
+
     /// Descriptor for a vector.
     /// If the type of the pointer to this StoredVector is "vector",
     /// the type of the StoredVector's content pointer indicates the inner type.
     vector: StoredVector,
 
     /// Pointer into the "next" arena, for copied-out objects.
-    tombstone: usize,
+    tombstone: StoredPtr,
 }
 
 impl StoredValue {

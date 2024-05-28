@@ -132,6 +132,7 @@ First, copy _old pointers_ into the new arena.
 
 At the end of this, the new arena contains pointers to the old
 arena, in breadth-first traversal order, without loops.
+The bitset contains all live objects.
 
 #### Swap pass
 
@@ -172,4 +173,11 @@ Memory overhead: 65/64 of memory; 64 bits of overhead plus one bit.
 
 Allocation is constant-time (yay!)
 
-GC only has to do one pass over the bitset.
+
+# Comparative analysis
+
+The modified-Cheney's approach is the only one of these that _compacts_,
+giving us reliable / constant-time allocation of vectors.
+
+...so I think I'm gonna go with that.
+
