@@ -46,7 +46,6 @@ where
         // - Fix labels
 
         self.generation += 1;
-        todo!();
     }
 }
 
@@ -62,7 +61,11 @@ where
             (self.gen_1.as_mut(), self.gen_0.as_mut())
         };
         let bitset = self.bitset.as_mut();
-        next.count = 0;
+        // Reserve index 0 for nil.
+        next.count = 1;
+        // ...which is already "copied".
+        bitset.set(0);
+
         for root in roots {
             if !bitset.get(root.idx()) {
                 let idx = next.count as usize;
@@ -72,7 +75,7 @@ where
             }
         }
 
-        let mut cursor = 0;
+        let mut cursor = 1;
         while cursor < next.count {
             // For anything in the new generation, we have only written to the tombstone
             // at this point.
@@ -135,7 +138,7 @@ where
             (self.gen_1.as_mut(), self.gen_0.as_mut())
         };
 
-        for cursor in 0..(next.count as usize) {
+        for cursor in 1..(next.count as usize) {
             // We only wrote to tombstone in the last pass,
             // for every element up to next.count-1.
             let ptr = unsafe { next.objects[cursor].tombstone };
@@ -151,7 +154,10 @@ where
             (self.gen_1.as_mut(), self.gen_0.as_mut())
         };
         let bitset = self.bitset.as_mut();
-        for bit in bitset.bits_set() {
+        let mut iter = bitset.bits_set();
+        // Skip index 0, the nil.
+        iter.next();
+        for bit in iter {
             // We updated all of the tombstones in the swap pass.
             let new_ptr = current.get_next(bit);
             let new_object = next.get_ref(new_ptr.idx());

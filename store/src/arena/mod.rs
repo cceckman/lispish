@@ -79,6 +79,10 @@ impl Generation {
     /// to an "inited" object.
     fn init(this: &mut MaybeUninit<Self>) -> &mut Self {
         let m = unsafe { this.assume_init_mut() };
+        // Reserve index 0 for nil;
+        // it's always a tombstone pointing to 0.
+        m.objects[0].tombstone = StoredPtr::default();
+        m.count = 1;
         m
     }
 
@@ -98,14 +102,12 @@ impl Generation {
     }
 
     pub fn get(&self, idx: usize) -> StoredValue {
-        assert_ne!(idx, 0);
         assert!(idx < self.count as usize);
         self.objects[idx]
     }
 
     /// Get a reference to the slot with the given index.
     pub fn get_ref(&mut self, idx: usize) -> &mut StoredValue {
-        assert_ne!(idx, 0);
         assert!(idx < self.count as usize);
         &mut self.objects[idx]
     }
@@ -124,14 +126,7 @@ impl Generation {
     }
 
     pub fn len(&self) -> usize {
-        // Discount one object: the reserved 'nil' index
         self.count as usize
-    }
-
-    /// Replace this object with a tombstone entry.
-    pub fn set_next(&mut self, old: StoredPtr, new: StoredPtr) {
-        assert!(old.idx() < self.count as usize);
-        self.objects[old.idx()].tombstone = new
     }
 }
 
@@ -158,7 +153,7 @@ impl Default for Arena {
         GenericGenerations {
             gen_0: Generation::new_boxed(),
             gen_1: Generation::new_boxed(),
-            bitset: Box::new(Bitset::default()),
+            bitset: Box::<Bitset>::default(),
             generation: 0,
         }
     }
@@ -202,22 +197,5 @@ where
 
     fn generation(&self) -> usize {
         self.generation
-    }
-}
-
-impl<T, B> GenericGenerations<T, B>
-where
-    T: AsRef<Generation> + AsMut<Generation>,
-    B: AsRef<Bitset> + AsMut<Bitset>,
-{
-    fn increment_generation(&mut self) -> (&mut Generation, &mut Generation) {
-        self.generation += 1;
-        if self.generation % 2 == 0 {
-            self.gen_0.as_mut().count = 1;
-            (self.gen_1.as_mut(), self.gen_0.as_mut())
-        } else {
-            self.gen_1.as_mut().count = 1;
-            (self.gen_0.as_mut(), self.gen_1.as_mut())
-        }
     }
 }

@@ -159,6 +159,13 @@ impl<'a> Object<'a> {
         }
     }
 
+    pub fn as_float(&self) -> Option<Float> {
+        match self {
+            Object::Float(p) => Some(*p),
+            _ => None,
+        }
+    }
+
     pub fn as_symbol(&self) -> Option<Symbol> {
         match self {
             Object::Symbol(p) => Some(*p),

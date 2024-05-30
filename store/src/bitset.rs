@@ -1,4 +1,4 @@
-use core::mem::size_of;
+use core::usize;
 
 /// Implementation of a bit set.
 /// The WORDS count is in the number of usizes.
@@ -14,7 +14,7 @@ pub struct ArrayBitSet<const WORDS: usize> {
 
 /// Returns the number of words required to hold the given number of bits.
 pub const fn words_for_bits(bits: usize) -> usize {
-    bits.div_ceil(size_of::<usize>() * 8)
+    bits.div_ceil(usize::BITS as usize)
 }
 
 pub trait BitSet {
@@ -24,14 +24,6 @@ pub trait BitSet {
     fn bits_set(&self) -> impl '_ + Iterator<Item = usize>;
     fn clear_all(&mut self);
     fn max(&self) -> usize;
-}
-
-impl<const WORDS: usize> ArrayBitSet<WORDS> {
-    /// Creates a new, empty bitset.
-    pub fn new() -> Self {
-        Default::default()
-    }
-    const BITS_PER_WORD: usize = core::mem::size_of::<usize>() * 8;
 }
 
 impl<const WORDS: usize> Default for ArrayBitSet<WORDS> {
@@ -46,8 +38,8 @@ impl<const WORDS: usize> Default for ArrayBitSet<WORDS> {
 impl<const WORDS: usize> BitSet for ArrayBitSet<WORDS> {
     /// Gets the value of the given bit
     fn get(&self, idx: usize) -> bool {
-        let word = idx / Self::BITS_PER_WORD;
-        let bit = idx % Self::BITS_PER_WORD;
+        let word = idx / usize::BITS as usize;
+        let bit = idx % usize::BITS as usize;
         if word >= self.data.len() {
             return false;
         }
@@ -57,8 +49,8 @@ impl<const WORDS: usize> BitSet for ArrayBitSet<WORDS> {
 
     /// Sets the given bit.
     fn set(&mut self, idx: usize) {
-        let word = idx / Self::BITS_PER_WORD;
-        let bit = idx % Self::BITS_PER_WORD;
+        let word = idx / usize::BITS as usize;
+        let bit = idx % usize::BITS as usize;
         {
             let masked = self.data[word] & (1 << bit);
             if masked == 0 {
@@ -70,8 +62,8 @@ impl<const WORDS: usize> BitSet for ArrayBitSet<WORDS> {
 
     /// Clears the given bit.
     fn clear(&mut self, idx: usize) {
-        let word = idx / Self::BITS_PER_WORD;
-        let bit = idx % Self::BITS_PER_WORD;
+        let word = idx / usize::BITS as usize;
+        let bit = idx % usize::BITS as usize;
         if word >= self.data.len() {
             // Nothing to do, it's already cleared.
             return;
@@ -90,7 +82,6 @@ impl<const WORDS: usize> BitSet for ArrayBitSet<WORDS> {
     fn bits_set(&self) -> impl '_ + Iterator<Item = usize> {
         BitIterator {
             idx: 0,
-            observed_count: 0,
             bitset: self,
         }
     }
@@ -104,13 +95,12 @@ impl<const WORDS: usize> BitSet for ArrayBitSet<WORDS> {
     }
 
     fn max(&self) -> usize {
-        Self::BITS_PER_WORD * WORDS
+        usize::BITS as usize * WORDS
     }
 }
 
 struct BitIterator<'a, B> {
     idx: usize,
-    observed_count: usize,
     bitset: &'a B,
 }
 
@@ -136,11 +126,13 @@ where
 
 #[cfg(test)]
 mod tests {
+    use crate::bitset::words_for_bits;
+
     use super::{ArrayBitSet, BitSet};
 
     #[test]
     fn exhaustive_single_bits() {
-        let mut bs = ArrayBitSet::<64>::new();
+        let mut bs = ArrayBitSet::<64>::default();
         for i in 0..255usize {
             assert!(!bs.get(i));
             bs.set(i);
@@ -154,7 +146,7 @@ mod tests {
 
     #[test]
     fn even_bits() {
-        let mut bs = ArrayBitSet::<64>::new();
+        let mut bs = ArrayBitSet::<64>::default();
         for i in (0..255usize).filter(|i| i % 2 == 0) {
             bs.set(i);
         }
@@ -164,13 +156,14 @@ mod tests {
 
     #[test]
     fn iterator() {
+        const WORDS: usize = words_for_bits(764756);
         let indices = {
             let mut v = vec![1, 2, 5, 14354, 764756, 25436];
             v.sort();
             v
         };
 
-        let mut bs = ArrayBitSet::<64>::new();
+        let mut bs = ArrayBitSet::<WORDS>::default();
         for i in indices.iter() {
             bs.set(*i);
         }
@@ -188,7 +181,7 @@ mod tests {
             v
         };
 
-        let mut bs = ArrayBitSet::<64>::new();
+        let mut bs = ArrayBitSet::<64>::default();
         for i in indices.iter() {
             bs.set(*i);
         }

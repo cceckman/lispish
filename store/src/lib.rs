@@ -355,8 +355,11 @@ impl Storage {
     /// we're trusting that the tag in the string matches the actual object.
     #[cfg(feature = "std")]
     pub fn lookup(&self, object_id: impl AsRef<str>) -> Result<Ptr<'_>, String> {
-        let stats = self.current_stats();
         let stored: StoredPtr = object_id.as_ref().parse()?;
+        if stored.is_nil() {
+            return Ok(Ptr::nil());
+        }
+        let stats = self.current_stats();
         let max_obj = self.arenas.borrow().current().len();
         let max_sym = stats.symbols;
 
@@ -690,6 +693,7 @@ mod tests {
         // b
         // (b ())
         // (a (b ()))
+        //
         // (a (a (b ())))
         // (b (b ()))
         // and the root combining those two trees.
@@ -713,6 +717,21 @@ mod tests {
             .get(store.pop())
             .try_into()
             .expect("root should be a pair");
+        {
+            // (b (b ()))
+            let Pair {
+                car: want_b,
+                cdr: next,
+            } = store.get(lsb).try_into().expect("should be a pair");
+            assert_eq!(want_b.get().as_float().unwrap(), B);
+            let Pair {
+                car: want_b,
+                cdr: next,
+            } = store.get(next).try_into().expect("should be a pair");
+            assert_eq!(want_b.get().as_float().unwrap(), B);
+            assert_eq!(next, Ptr::nil());
+        }
+
         store.push(lsb);
         // Objects are:
         // b
