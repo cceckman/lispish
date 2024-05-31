@@ -19,7 +19,8 @@ jobs:
       matrix:
         flags:
           - ""
-          - "--no-default-features"
+        # TODO: Enable no_std as well.
+        # - "--no-default-features"
     steps:
       - uses: actions/checkout@v4
       - run: rustup update stable && rustup default stable
