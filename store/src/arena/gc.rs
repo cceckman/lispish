@@ -42,9 +42,6 @@ where
 
         self.fixup_pass(roots);
 
-        // TODO: here:
-        // - Fix labels
-
         self.generation += 1;
     }
 }
@@ -82,51 +79,45 @@ where
             // And we have written to every tombstone before next.count.
             let old_ptr = unsafe { next.objects[cursor as usize].tombstone };
             let old_object = current.get(old_ptr.idx());
-            match old_ptr.tag() {
-                Tag::Pair => {
-                    // Safe: the tag for this pointer indicates a pair.
-                    let pair = unsafe { old_object.pair };
-                    for ptr in [pair.car, pair.cdr] {
-                        if !bitset.get(ptr.idx()) {
-                            let idx = next.count as usize;
-                            next.objects[idx].tombstone = ptr;
-                            next.count += 1;
-                            bitset.set(ptr.idx());
-                        }
+            if let Some(pair) = old_object.as_pair(old_ptr) {
+                for ptr in [pair.car, pair.cdr] {
+                    if !bitset.get(ptr.idx()) {
+                        let idx = next.count as usize;
+                        next.objects[idx].tombstone = ptr;
+                        next.count += 1;
+                        bitset.set(ptr.idx());
                     }
                 }
-                Tag::Vector => {
-                    let vector = unsafe { old_object.vector };
-                    for i in 0..vector.length {
-                        if let Some(ptr) = vector.offset(i) {
-                            //
-                            // we do not check the bitset here;
-                            // if an object is in a vector and is also referred to
-                            // directly, two cases:
-                            // 1. The direct pointer(s) run first, then the vector.
-                            //    In this case, in the swap pass,
-                            //    the vector will overwrite the tombstone
-                            //    set by the direct pointer; the resulting tombstone
-                            //    will be the vector one.
-                            //    This will leave a hole in the new generation-
-                            //    the "first place" the vector-element went to,
-                            //    from the pair.
-                            //    At most one hole per object, since only the first
-                            //    pair will generate a hole.
-                            // 2. The vector runs first, in which case no hole is created.
-                            //
-                            // TODO: WARNING DIRE:
-                            // A node _must not_ be a member of multiple vectors.
-                            // Then...they'll get split up and everything will go to shit.
-                            let idx = next.count as usize;
-                            next.objects[idx].tombstone = ptr;
-                            next.count += 1;
-                            bitset.set(ptr.idx());
-                        }
+            }
+            if let Some(vector) = old_object.as_vector(old_ptr) {
+                for i in 0..vector.length {
+                    if let Some(ptr) = vector.offset(i) {
+                        //
+                        // we do not check the bitset here;
+                        // if an object is in a vector and is also referred to
+                        // directly, two cases:
+                        // 1. The direct pointer(s) run first, then the vector.
+                        //    In this case, in the swap pass,
+                        //    the vector will overwrite the tombstone
+                        //    set by the direct pointer; the resulting tombstone
+                        //    will be the vector one.
+                        //    This will leave a hole in the new generation-
+                        //    the "first place" the vector-element went to,
+                        //    from the pair.
+                        //    At most one hole per object, since only the first
+                        //    pair will generate a hole.
+                        // 2. The vector runs first, in which case no hole is created.
+                        //
+                        // TODO: WARNING DIRE:
+                        // A node _must not_ be a member of multiple vectors.
+                        // Then...they'll get split up and everything will go to shit.
+                        let idx = next.count as usize;
+                        next.objects[idx].tombstone = ptr;
+                        next.count += 1;
+                        bitset.set(ptr.idx());
                     }
                 }
-                Tag::Nil | Tag::Integer | Tag::Float | Tag::Bytes | Tag::Symbol => (),
-            };
+            }
             cursor += 1;
         }
     }

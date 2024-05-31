@@ -65,18 +65,23 @@ mod utility;
 mod vectors;
 
 pub mod strings;
+use arena::get_arenas;
+
 pub use self::objects::*;
 #[cfg(feature = "render")]
 pub use self::render::ObjectFormat;
 pub use self::tag::*;
 pub use self::vectors::ByteVector;
 
-use self::arena::{Arena, Generations, GenerationsAccess};
+use self::arena::{Arenas, Generations, GenerationsAccess};
 #[cfg(feature = "render")]
 use self::render::ObjectFormats;
 use self::strings::to_bytes;
 
-use core::cell::{RefCell, RefMut};
+use core::cell::RefCell;
+#[cfg(feature = "std")]
+use core::cell::RefMut;
+
 use core::cmp::max;
 use core::ops::DerefMut;
 
@@ -124,7 +129,7 @@ pub struct Storage {
     #[cfg(feature = "render")]
     labels: RefCell<ObjectFormats>,
 
-    arenas: RefCell<Arena>,
+    arenas: RefCell<Arenas>,
 }
 
 impl Default for Storage {
@@ -135,7 +140,7 @@ impl Default for Storage {
             high_water: Default::default(),
             #[cfg(feature = "render")]
             labels: Default::default(),
-            arenas: Default::default(),
+            arenas: RefCell::new(get_arenas().expect("failed to acquire arenas lock")),
         };
         let symbols = s.put_vector::<Pair>(core::iter::empty());
         *s.symbols.borrow_mut() = symbols.raw;
@@ -331,12 +336,14 @@ impl Storage {
         // Soft-destructure:
         let mut root = self.root.borrow_mut();
         let mut symbols = self.symbols.borrow_mut();
+
+        #[cfg(feature = "render")]
         let mut labels = self.labels.borrow_mut();
 
         // We intentionally put the symbol table first,
         // so that nice ~stable vector can land early.
         let mut roots = [symbols.deref_mut(), root.deref_mut()];
-        let mut arenas = self.arenas.borrow_mut().gc(
+        self.arenas.borrow_mut().gc(
             &mut roots,
             #[cfg(feature = "render")]
             &mut labels,

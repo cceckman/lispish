@@ -3,6 +3,8 @@
 //! This implementation uses a 4GiB arena:
 //! 32-bit pointers, 8B-aligned, with 3b of tag.
 
+use crate::bitset::BitSet;
+#[cfg(feature = "std")]
 use crate::ObjectFormats;
 use core::mem::MaybeUninit;
 
@@ -12,6 +14,19 @@ use crate::{
 };
 
 mod gc;
+
+mod static_cell;
+
+#[cfg(not(feature = "std"))]
+mod static_data;
+
+#[cfg(not(feature = "std"))]
+pub use static_data::*;
+
+#[cfg(feature = "std")]
+mod dynamic_data;
+#[cfg(feature = "std")]
+pub use dynamic_data::*;
 
 /// The interface to Generations,
 /// the backing store for Storage without lifetime constraints.
@@ -41,7 +56,7 @@ pub trait Generations {
 }
 
 const OBJECT_SIZE: usize = core::mem::size_of::<StoredValue>();
-const BITS_PER_BYTE: usize = 8;
+const BITS_PER_BYTE: usize = u8::BITS as usize;
 
 /// Compute the number of objects available per generation,
 /// based on the amount of memory available.
@@ -74,9 +89,13 @@ pub struct Generation {
     count: u32,
 }
 
-impl Generation {
-    /// Perform startup initialization, to go from a "maybe uninit"
-    /// to an "inited" object.
+/// Trait that allows relatively-lazy initialization of memory.
+/// A type implementing Init can turn a MaybeUninit into a real ~~boy~~ Self.
+trait Init: Sized {
+    fn init(this: &mut MaybeUninit<Self>) -> &mut Self;
+}
+
+impl Init for Generation {
     fn init(this: &mut MaybeUninit<Self>) -> &mut Self {
         let m = unsafe { this.assume_init_mut() };
         // Reserve index 0 for nil;
@@ -85,7 +104,17 @@ impl Generation {
         m.count = 1;
         m
     }
+}
 
+impl Init for Bitset {
+    fn init(this: &mut MaybeUninit<Self>) -> &mut Self {
+        let bitset = unsafe { this.assume_init_mut() };
+        bitset.clear_all();
+        bitset
+    }
+}
+
+impl Generation {
     /// Stores the Lisp object in storage.
     pub fn put_object(&mut self, object: Object) -> StoredPtr {
         let (stored, tag) = object.into();
@@ -141,37 +170,6 @@ pub struct GenericGenerations<GenerationT, BitsetT> {
     gen_1: GenerationT,
     bitset: BitsetT,
     generation: usize,
-}
-
-/// The standard generation type.
-#[cfg(feature = "std")]
-pub type Arena = GenericGenerations<Box<Generation>, Box<Bitset>>;
-
-#[cfg(feature = "std")]
-impl Default for Arena {
-    fn default() -> Self {
-        GenericGenerations {
-            gen_0: Generation::new_boxed(),
-            gen_1: Generation::new_boxed(),
-            bitset: Box::<Bitset>::default(),
-            generation: 0,
-        }
-    }
-}
-
-#[cfg(feature = "std")]
-impl Generation {
-    /// Perform an in-place boxed allocation of a Generation.
-    fn new_boxed() -> Box<Self> {
-        // Alas, requires unsafe: https://github.com/rust-lang/rust/issues/53827#issuecomment-572476302
-        use std::alloc::{alloc, Layout};
-        let layout = Layout::new::<MaybeUninit<Generation>>();
-        unsafe {
-            let ptr = &mut *(alloc(layout) as *mut MaybeUninit<Generation>);
-            let ptr = Generation::init(ptr);
-            Box::from_raw(ptr)
-        }
-    }
 }
 
 impl<T, B> GenerationsAccess for GenericGenerations<T, B>
