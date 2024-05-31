@@ -37,7 +37,7 @@ impl<'a> LazyLocation<'a> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "std"))]
 mod tests {
     use lispish_store::{strings::LispString, Storage};
 
