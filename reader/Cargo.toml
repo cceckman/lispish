@@ -7,3 +7,7 @@ edition = "2021"
 
 [dependencies]
 lispish-store = { version = "0.1.0", path = "../store" }
+
+[features]
+std = []
+default = ["std"]

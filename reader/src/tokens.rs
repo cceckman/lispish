@@ -1,24 +1,22 @@
 //! Routines for tokenization.
+//!
+//! ## Speculative design
+//!
+//! To keep the interpreter in fixed memory,
+//! the tokenizer operates as a series of iterators.
+//!
+//! The `Tokenizer` iterates over a character iterator,
+//! and produces `Token`s.
+//!
 
-use lispish_store::{ByteVector, Ptr};
+use lispish_store::{ByteVector, Ptr, Storage};
 
-struct Tokenizer<CharIter> {
+struct Tokenizer<'a, CharIter> {
+    store: &'a Storage,
     characters: CharIter,
+
     buffer: [char; 8],
     buf_len: usize,
-}
-
-impl<CharIter> From<CharIter> for Tokenizer<CharIter>
-where
-    CharIter: Iterator<Item = char>,
-{
-    fn from(characters: CharIter) -> Self {
-        Tokenizer {
-            characters,
-            buffer: Default::default(),
-            buf_len: 0,
-        }
-    }
 }
 
 enum TokenType {

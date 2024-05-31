@@ -6,6 +6,8 @@ use core::{cmp::Ordering, fmt::Debug};
 use crate::{Bytes, Error, Pair, Ptr, Storage, Tag, Vector};
 
 /// A ByteVector is a set of contiguously-stored bytes.
+/// It is backed by a Vector-of-Bytes, but the last word
+/// (8B) may be incomplete.
 #[derive(Debug, Clone, Copy)]
 pub struct ByteVector<'a> {
     pub vector: Vector<'a>,
