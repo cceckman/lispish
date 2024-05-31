@@ -31,7 +31,7 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ matrix.flags }}
       - run: rustup update stable && rustup default stable
       - run: "cargo build --verbose ${{ matrix.flags }}"
       - run: "cargo test --verbose ${{ matrix.flags }}"
