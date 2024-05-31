@@ -19,8 +19,7 @@ jobs:
       matrix:
         flags:
           - ""
-        # TODO: Enable no_std as well.
-        # - "--no-default-features"
+          - "--no-default-features"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/cache@v4

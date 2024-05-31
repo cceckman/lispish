@@ -1,39 +1,35 @@
+# TODOs
 
-In no particular order:
+## Goals
 
--   [ ] `()` as an atom at the reader level, rather than a list?
--   [ ] Comments
--   [ ] Proper/complete symbol syntax
-    -   [ ] Exclude non-symbol characters (`"`, `'`, open parens, etc)
-    -   [ ] Raw/escape syntax
+- [ ] Get a good test suite, where I can compare the results to MIT / GNU Scheme.
+- [ ] ...or maybe instead, conform to [R6RS]? Or a strict subset...R7RS?
+- [ ] Benchmark.
+- [ ] Refactor into a bytecode interpreter / compiler pair.
+- [ ] Rewrite it in RISC-V.
+- [ ] Parallel execution with message-passing.
 
--   [ ] Symbol interning - how to handle?
-        -   I think I need a more complete understanding of what "package" means.
-        -   And: this is a _reader_ feature rather than an _evaluator_ feature?
-            Is "reader" a distinct stage after the parser?
-        -   Self-referential symbols...including `NIL`?
+## Tasks
 
-            > It's also possible for symbols to be self-evaluating in the sense that the variables they name can be assigned the value of the symbol itself. Two important constants that are defined this way are `T` and `NIL`, the canonical true and false values. I'll discuss their role as booleans in the section "Truth, Falsehood, and Equality."
+- [ ] no_std support for store.
+  - [x] Multiple roots in the store.
+  - [x] Fold strings into the store.
+    - Keep arena allocator and moving pointers, allow contiguous allocation?
+      Supports vectors cleanly, given appropriate unions.
+    - Make everything more complicated...?
+  - [x] Fold symbols into the store. Multiple roots, one of which is the symbol table.
+  - [ ] No marginal allocation for bitset / GC flow.
+- [ ] no_std support for runtime.
+  - [ ] Lexer, Parser use the new no_std store. This is ~a rewrite.
+  - [ ] While we're at it, add "structure parsing" after "S-expression parsing".
+        Determine forms up-front;   
+- [ ] Batch scriptability.
+    - [ ] REPL / CLI / batch interpreter frontend.
+    - [ ] I/O routines (`display`, at least).
+- [ ] Macros.
+  It seems like these aren't arbitrary transforms - just "structure to structure"
+  mappings.
+- [ ] Bytecode.
 
-            > This equivalence between `NIL` and the empty list is built into the reader: if the reader sees `()`, it reads it as the symbol `NIL`.
 
-            But...does that mean `NIL` can be used as an empty list for e.g.
-            a `map` call or similar? Hm.
-
-        -   Keyword (`:`) symbols: "When the reader interns such a name, it automatically defines a constant variable with the name and with the symbol as the value."
-
--   [ ] Additional numeric syntaxes
-
-        ...and representation thereof, e.g. rational types
-
--   [ ] Quote syntax, `#` syntax, ...
-
-        (Not an immediate problem: can use `(quote foo)`, `(function foo)`
-        builtins to start off with)
-
--   [ ] Evaluation
-    -   [ ] Builtin functions (`+` etc)
-    -   [ ] Control flow / special operators; `if`, then
-    -   [ ] Variables - necessary for proper symbol support?
-            (Backport builtins to it)
-
+[R6RS]: https://www.r6rs.org/final/r6rs.pdf

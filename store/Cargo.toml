@@ -1,0 +1,21 @@
+[package]
+name = "lispish-store"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+dot-writer = { version = "0.1.3", optional = true }
+maud = { version = "0.26.0", optional = true, features = ["axum"] }
+string-interner = "0.15.0"
+tempfile = { version = "3.10.1", optional = true }
+tracing = "0.1.40"
+
+[features]
+std = []
+render = ["dep:maud", "dep:dot-writer", "tempfile", "std"]
+default = ["render", "std"]
+tempfile = ["dep:tempfile"]
+
+

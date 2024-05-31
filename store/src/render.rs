@@ -2,12 +2,12 @@ use std::collections::{HashMap, VecDeque};
 
 use dot_writer::Attributes;
 use dot_writer::DotWriter;
+use maud::PreEscaped;
 use std::io::Write;
 use std::process::Stdio;
 
-use crate::data::{Object, Pair, Ptr, Storage};
+use crate::{Object, Pair, Ptr, Storage};
 
-use super::bitset::BitSet;
 use super::StorageStats;
 use super::StoredPtr;
 
@@ -16,16 +16,23 @@ fn node_for_ptr(p: Ptr) -> String {
 }
 
 /// Object metadata, for rendering purposes.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ObjectFormat {
     pub label: String,
     pub bg_color: String,
 }
 
+#[cfg(feature = "std")]
 pub type ObjectFormats = HashMap<StoredPtr, ObjectFormat>;
 
+fn render_vector_element(i: usize, ptr: Ptr) -> PreEscaped<String> {
+    maud::html!(tr {
+        td { (i) }
+        td port=(format!("port{i}")) { (ptr) }
+    })
+}
+
 fn render_node<'a>(
-    store: &'a Storage,
     object_meta: &ObjectFormats,
     graph: &mut dot_writer::Scope,
     it: Ptr<'a>,
@@ -38,7 +45,7 @@ fn render_node<'a>(
     };
     let node_id = node.id();
 
-    let obj = store.get(it);
+    let obj = it.get();
     node.set_shape(dot_writer::Shape::None);
 
     let get_name = |ptr: &Ptr| {
@@ -62,30 +69,34 @@ fn render_node<'a>(
     let name = get_name(&it);
 
     fn single_value(v: impl std::fmt::Display) -> maud::PreEscaped<String> {
-        maud::html!(td colspan="2" { (v) })
+        maud::html!(tr { td colspan="2" { (v) } })
     }
 
     let value: maud::PreEscaped<String> = match obj {
         Object::Nil => unreachable!("must not queue to nil pointer"),
         Object::Integer(v) => single_value(v),
         Object::Float(v) => single_value(v),
-        Object::String(v) => {
-            let bytes = store.get_string(&v);
-            single_value(String::from_utf8_lossy(&bytes))
-        }
-        Object::Symbol(v) => single_value(store.get_symbol(v)),
-        Object::Builtin(fptr) => single_value(format!("{fptr:p}")),
-        Object::Pair(Pair { car, cdr }) => maud::html!(
-                    td port="car" { (car) }
-                    td port="cdr" { (cdr) }
-        ),
+        Object::Symbol(v) => single_value(v.get().collect::<String>()),
+        Object::Pair(Pair { car, cdr }) => maud::html!( tr {
+                        td port="car" { (car) }
+                        td port="cdr" { (cdr) }
+        }),
+        Object::Bytes(b) => maud::html!(tr {
+                        td { (format!("{:x?}", &b[..4])) }
+                        td { (format!("{:x?}", &b[4..])) }
+        }),
+        Object::Vector(v) => maud::html! {
+            @for (i, o) in v.enumerate() {
+                (render_vector_element(i, o))
+            }
+        },
     };
     node.set_html(&format!(
         "<{}>",
         maud::html!(
             table {
                 (name)
-                tr { (value) }
+                (value)
             }
         )
         .into_string()
@@ -110,7 +121,7 @@ fn render_node<'a>(
                 // Symbols are addressed by their intern ID, not by an object.
                 // Generate a unique node for each visit.
                 // Unique them (so we don't have long edges to the definitions)
-                let (id, _) = render_node(store, object_meta, graph, ptr);
+                let (id, _) = render_node(object_meta, graph, ptr);
                 graph.edge(port, id);
                 result.push(ptr);
             } else {
@@ -120,47 +131,68 @@ fn render_node<'a>(
             }
         }
     };
+    if let Object::Vector(v) = obj {
+        for (i, ptr) in v.enumerate() {
+            let port = format!("port{i}");
+            if ptr.is_nil() {
+                continue;
+            }
+            // We always visit successors, even if we aren't going to render them,
+            // so we get an accurate count for stats.
+            result.push(ptr);
+
+            if ptr.is_symbol() {
+                // Symbols are addressed by their intern ID, not by an object.
+                // Generate a unique node for each visit.
+                // Unique them (so we don't have long edges to the definitions)
+                let (id, _) = render_node(object_meta, graph, ptr);
+                graph.edge(port, id);
+                result.push(ptr);
+            } else {
+                // Need to render the target node on the next pass.
+                let name = node_for_ptr(ptr);
+                graph.edge(port, name);
+            }
+        }
+    }
     (node_id, result)
 }
 
 /// Render the state of storage into Graphviz graph.
 fn render_gv(store: &Storage, object_meta: &ObjectFormats) -> (StorageStats, Vec<u8>) {
-    let mut visited_objects = BitSet::new();
-    let mut visited_symbols = BitSet::new();
+    let mut visited_objects = std::collections::HashSet::new();
+    let mut visited_symbols = std::collections::HashSet::new();
     let mut stats = StorageStats::default();
     let mut outbuf = Vec::new();
     {
         let mut writer = DotWriter::from(&mut outbuf);
         let mut graph = writer.digraph();
         graph.node_attributes().set_font("monospace");
-        let mut queue = VecDeque::new();
-        queue.push_back(store.root());
+        let mut queue: VecDeque<Ptr> = VecDeque::new();
+        queue.push_back(store.bind(*store.root.borrow()));
 
         while let Some(it) = queue.pop_front() {
             // Special-case symbols, since they have their own
             // index space.
             if it.is_symbol() {
-                if !visited_symbols.get(it.idx()) {
+                if !visited_symbols.contains(&it.idx()) {
                     stats.symbols += 1;
                 }
-                visited_symbols.set(it.idx());
+                visited_symbols.insert(it.idx());
                 continue;
             }
 
-            if visited_objects.get(it.idx()) {
+            if visited_objects.contains(&it.idx()) {
                 continue;
             }
-            visited_objects.set(it.idx());
+            visited_objects.insert(it.idx());
             if it.is_nil() {
                 // We render nil only as a target; we don't insert a node for it.
                 continue;
             }
             stats.objects += 1;
 
-            if let Object::String(s) = store.get(it) {
-                stats.string_data += s.len() as usize;
-            }
-            let (_, next) = render_node(store, object_meta, &mut graph, it);
+            let (_, next) = render_node(object_meta, &mut graph, it);
             queue.extend(next);
         }
     }
@@ -172,7 +204,6 @@ impl StorageStats {
         maud::html!(
             strong { (header) ": " }
             (self.objects) " objects / "
-            (self.string_data) " string bytes / "
             (self.symbols) " symbols"
         )
     }
